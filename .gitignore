@@ -1,0 +1,13 @@
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Node / Next
+node_modules/
+frontend/.next/
+
+# Generated assets
+generated-images/
+backend/generated-images/
