@@ -1,42 +1,79 @@
-from __future__ import annotations
-
-from pathlib import Path
-
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from app.ai import AIService
-from app.config import get_settings
-from app.database import init_db
-from app.image_service import ImageService
-from app.routes.api import router as api_router
-from app.vector_store import VectorStore
+from app.config import settings
+from app.db.session import engine
+from app.models import Base
+from app.routes.branching import router as branching_router
+from app.routes.chat import router as chat_router
+from app.routes.illustrations import router as illustrations_router
+from app.routes.settings import router as settings_router
+from app.routes.stories import router as stories_router
+from app.services.vector_service import ensure_collection
 
-settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=settings.backend_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(stories_router)
+app.include_router(settings_router)
+app.include_router(chat_router)
+app.include_router(branching_router)
+app.include_router(illustrations_router)
+
 
 @app.on_event("startup")
-def on_startup() -> None:
-    init_db()
-    app.state.ai_service = AIService(settings)
-    app.state.vector_store = VectorStore(settings)
-    app.state.vector_store.ensure_collection()
-    app.state.image_service = ImageService(settings)
+async def on_startup() -> None:
+    Base.metadata.create_all(bind=engine)
+
+    # Initialize the vector collection with a typical 768-dim embedding size.
+    try:
+        await ensure_collection(vector_size=768)
+    except Exception:
+        pass
 
 
-app.include_router(api_router)
+@app.get("/api/health")
+async def health() -> dict:
+    checks = {
+        "api": "ok",
+        "ollama": "down",
+        "qdrant": "down",
+        "comfyui": "down",
+    }
 
-images_dir = Path(settings.generated_images_dir)
-images_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/generated-images", StaticFiles(directory=str(images_dir)), name="generated-images")
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        try:
+            ollama = await client.get(f"{settings.ollama_base_url}/api/tags")
+            if ollama.status_code < 400:
+                checks["ollama"] = "ok"
+        except Exception:
+            pass
+
+        try:
+            qdrant = await client.get(f"{settings.qdrant_url}/collections")
+            if qdrant.status_code < 400:
+                checks["qdrant"] = "ok"
+        except Exception:
+            pass
+
+        try:
+            comfyui = await client.get(f"{settings.comfyui_base_url}/system_stats")
+            if comfyui.status_code < 400:
+                checks["comfyui"] = "ok"
+        except Exception:
+            pass
+
+    status = "ok" if all(v == "ok" or k == "api" for k, v in checks.items()) else "degraded"
+    return {
+        "status": status,
+        "checks": checks,
+    }

@@ -1,0 +1,471 @@
+"use client";
+
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+import {
+  createIllustration,
+  getIllustration,
+  listBranches,
+  getSettings,
+  getStory,
+  listMessages,
+  rewindBranch,
+  sendChat,
+  updateSettings,
+} from "../../../lib/api";
+import type { BranchSummary, IllustrationJob, Message, Story, StorySettings } from "../../../lib/types";
+
+
+type SelectionState = {
+  text: string;
+  messageId: string;
+} | null;
+
+
+const defaultSettings: StorySettings = {
+  story_id: "",
+  context_size: 4096,
+  preprompt: "",
+  character_name: "語り部の相棒",
+  character_persona: "親密で文学的、比喩を交えつつ物語を前へ進める。",
+  temperature: 0.9,
+  top_p: 0.9,
+};
+
+
+function messageTone(message: Message): string {
+  if (message.role === "user") {
+    return "#f4f2ff";
+  }
+  if (message.kind === "dialogue") {
+    return "#fff6ea";
+  }
+  if (message.kind === "narration") {
+    return "#e8f4ef";
+  }
+  return "#f5f5f5";
+}
+
+
+export default function StoryPage({ params }: { params: { id: string } }) {
+  const storyId = params.id;
+
+  const [story, setStory] = useState<Story | null>(null);
+  const [settings, setSettings] = useState<StorySettings>(defaultSettings);
+  const [branchId, setBranchId] = useState("main");
+  const [branches, setBranches] = useState<BranchSummary[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [loadingMoreHistory, setLoadingMoreHistory] = useState(false);
+  const [input, setInput] = useState("港の霧の中から、誰かがこちらを見ている。");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selection, setSelection] = useState<SelectionState>(null);
+  const [job, setJob] = useState<IllustrationJob | null>(null);
+  const [savingSettings, setSavingSettings] = useState(false);
+
+  const refreshEverything = useCallback(
+    async (forcedBranchId?: string) => {
+      setError(null);
+      try {
+        const storyData = await getStory(storyId);
+        const targetBranch = forcedBranchId ?? storyData.active_branch_id ?? "main";
+
+        const [settingsData, messagePage, branchData] = await Promise.all([
+          getSettings(storyId),
+          listMessages(storyId, targetBranch, { limit: 40 }),
+          listBranches(storyId),
+        ]);
+
+        setStory(storyData);
+        setSettings(settingsData);
+        setMessages(messagePage.items);
+        setHasMoreHistory(messagePage.has_more);
+        setBranchId(targetBranch);
+        setBranches(branchData);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      }
+    },
+    [storyId]
+  );
+
+  useEffect(() => {
+    void refreshEverything();
+  }, [refreshEverything]);
+
+  useEffect(() => {
+    if (!job) {
+      return;
+    }
+
+    if (job.status === "done" || job.status === "error") {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      void getIllustration(storyId, job.id)
+        .then((updated) => setJob(updated))
+        .catch(() => {
+          // Keep polling until job completes or user reloads.
+        });
+    }, 2500);
+
+    return () => clearInterval(timer);
+  }, [storyId, job]);
+
+  async function onSend(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!input.trim()) {
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = {
+        content: input,
+        branch_id: branchId,
+        parent_message_id: messages.length ? messages[messages.length - 1].id : null,
+      };
+      const result = await sendChat(storyId, payload);
+      setMessages((prev) => [...prev, ...result.messages]);
+      const branchData = await listBranches(storyId);
+      setBranches(branchData);
+      setInput("");
+      setSelection(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "送信に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onGenerateIllustration(sourceText: string, messageId: string | null) {
+    setError(null);
+    try {
+      const created = await createIllustration(storyId, sourceText, messageId);
+      setJob(created);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "挿絵生成の開始に失敗しました");
+    }
+  }
+
+  async function onRewind(messageId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await rewindBranch(storyId, messageId);
+      setSelection(null);
+      await refreshEverything(result.new_branch_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "巻き戻しに失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onSaveSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSavingSettings(true);
+    setError(null);
+    try {
+      const updated = await updateSettings(storyId, settings);
+      setSettings(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "設定の保存に失敗しました");
+    } finally {
+      setSavingSettings(false);
+    }
+  }
+
+  async function onLoadOlderHistory() {
+    if (loadingMoreHistory || !hasMoreHistory || messages.length === 0) {
+      return;
+    }
+
+    setLoadingMoreHistory(true);
+    setError(null);
+    try {
+      const oldest = messages[0];
+      const page = await listMessages(storyId, branchId, {
+        limit: 40,
+        beforeMessageId: oldest.id,
+      });
+      setMessages((prev) => [...page.items, ...prev]);
+      setHasMoreHistory(page.has_more);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "過去ログの取得に失敗しました");
+    } finally {
+      setLoadingMoreHistory(false);
+    }
+  }
+
+  async function onSwitchBranch(nextBranchId: string) {
+    if (nextBranchId === branchId) {
+      return;
+    }
+
+    setBusy(true);
+    setSelection(null);
+    try {
+      await refreshEverything(nextBranchId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const selectedForMessage = useMemo(() => {
+    if (!selection) {
+      return {} as Record<string, string>;
+    }
+    return { [selection.messageId]: selection.text };
+  }, [selection]);
+
+  return (
+    <main className="shell" style={{ maxWidth: 1300, margin: "0 auto" }}>
+      <header className="card" style={{ padding: 16, marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h1 style={{ margin: 0 }}>{story?.title ?? "物語"}</h1>
+            <p className="muted" style={{ marginBottom: 0 }}>
+              branch: {branchId}
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" onClick={() => void refreshEverything(branchId)}>
+              再読み込み
+            </button>
+            <Link href="/" className="btn">
+              新しい物語
+            </Link>
+          </div>
+        </div>
+      </header>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 340px)", gap: 14 }}>
+        <section className="card" style={{ padding: 12, minHeight: 680, display: "flex", flexDirection: "column" }}>
+          <div
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              borderRadius: 12,
+              padding: 10,
+              border: "1px solid var(--line)",
+              background: "#ffffff8a",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => void onLoadOlderHistory()}
+                disabled={loadingMoreHistory || !hasMoreHistory}
+              >
+                {loadingMoreHistory ? "読み込み中..." : hasMoreHistory ? "過去を読み込む" : "これ以上ありません"}
+              </button>
+            </div>
+
+            {messages.map((message) => (
+              <article
+                key={message.id}
+                style={{
+                  background: messageTone(message),
+                  padding: 12,
+                  borderRadius: 10,
+                  marginBottom: 10,
+                  border: "1px solid var(--line)",
+                }}
+                onMouseUp={() => {
+                  const selected = window.getSelection()?.toString().trim() ?? "";
+                  if (selected) {
+                    setSelection({ text: selected, messageId: message.id });
+                  }
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <strong>
+                    {message.role === "user"
+                      ? "あなた"
+                      : message.kind === "narration"
+                        ? "Narration"
+                        : settings.character_name || "Character"}
+                  </strong>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    {new Date(message.created_at).toLocaleString("ja-JP")}
+                  </span>
+                </div>
+
+                <p style={{ whiteSpace: "pre-wrap", marginBottom: 8 }}>{message.content}</p>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    className="btn"
+                    onClick={() => void onGenerateIllustration(message.content, message.id)}
+                  >
+                    この段落で挿絵
+                  </button>
+
+                  {selectedForMessage[message.id] ? (
+                    <button
+                      className="btn"
+                      onClick={() => void onGenerateIllustration(selectedForMessage[message.id], message.id)}
+                    >
+                      選択テキストで挿絵
+                    </button>
+                  ) : null}
+
+                  <button className="btn" onClick={() => void onRewind(message.id)}>
+                    ここからやり直す
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <form onSubmit={onSend} style={{ display: "grid", gap: 8, marginTop: 10 }}>
+            <textarea
+              className="field"
+              rows={4}
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="物語を入力..."
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span className="muted">文字数: {Array.from(input).length}</span>
+              <button className="btn primary" type="submit" disabled={busy}>
+                {busy ? "生成中..." : "送信"}
+              </button>
+            </div>
+          </form>
+
+          {error ? <p style={{ color: "#8f1f10" }}>{error}</p> : null}
+        </section>
+
+        <aside className="card" style={{ padding: 14, height: "fit-content" }}>
+          <h2 style={{ marginTop: 0 }}>分岐一覧</h2>
+          <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
+            {branches.length === 0 ? <p className="muted">分岐はまだありません。</p> : null}
+            {branches.map((branch) => (
+              <button
+                key={branch.branch_id}
+                className={`btn ${branch.branch_id === branchId ? "primary" : ""}`}
+                type="button"
+                onClick={() => void onSwitchBranch(branch.branch_id)}
+                disabled={busy}
+                style={{ textAlign: "left" }}
+                title={branch.branch_id}
+              >
+                <div style={{ fontSize: 12, opacity: 0.9 }}>
+                  {branch.branch_id === branchId ? "表示中" : branch.is_active ? "現在の正史" : "履歴分岐"}
+                </div>
+                <div style={{ fontWeight: 700 }}>{branch.branch_id.slice(0, 8)}</div>
+                <div style={{ fontSize: 12 }}>messages: {branch.message_count}</div>
+              </button>
+            ))}
+          </div>
+
+          <hr style={{ margin: "16px 0", borderColor: "var(--line)" }} />
+
+          <h2 style={{ marginTop: 0 }}>物語設定</h2>
+          <form onSubmit={onSaveSettings} style={{ display: "grid", gap: 8 }}>
+            <label>
+              Context Size
+              <input
+                className="field"
+                type="number"
+                min={512}
+                max={32768}
+                value={settings.context_size}
+                onChange={(event) =>
+                  setSettings((prev) => ({ ...prev, context_size: Number(event.target.value) }))
+                }
+              />
+            </label>
+
+            <label>
+              プレプロンプト
+              <textarea
+                className="field"
+                rows={4}
+                value={settings.preprompt}
+                onChange={(event) => setSettings((prev) => ({ ...prev, preprompt: event.target.value }))}
+              />
+            </label>
+
+            <label>
+              登場人物名
+              <input
+                className="field"
+                value={settings.character_name}
+                onChange={(event) => setSettings((prev) => ({ ...prev, character_name: event.target.value }))}
+              />
+            </label>
+
+            <label>
+              人格設定
+              <textarea
+                className="field"
+                rows={5}
+                value={settings.character_persona}
+                onChange={(event) =>
+                  setSettings((prev) => ({ ...prev, character_persona: event.target.value }))
+                }
+              />
+            </label>
+
+            <label>
+              Temperature
+              <input
+                className="field"
+                type="number"
+                min={0}
+                max={2}
+                step={0.1}
+                value={settings.temperature}
+                onChange={(event) =>
+                  setSettings((prev) => ({ ...prev, temperature: Number(event.target.value) }))
+                }
+              />
+            </label>
+
+            <label>
+              Top P
+              <input
+                className="field"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={settings.top_p}
+                onChange={(event) => setSettings((prev) => ({ ...prev, top_p: Number(event.target.value) }))}
+              />
+            </label>
+
+            <button className="btn primary" type="submit" disabled={savingSettings}>
+              {savingSettings ? "保存中..." : "設定を保存"}
+            </button>
+          </form>
+
+          <hr style={{ margin: "16px 0", borderColor: "var(--line)" }} />
+
+          <h3 style={{ marginTop: 0 }}>挿絵ジョブ</h3>
+          {!job ? <p className="muted">まだ実行していません。</p> : null}
+          {job ? (
+            <div>
+              <p>
+                status: <strong>{job.status}</strong>
+              </p>
+              {job.status === "error" ? <p style={{ color: "#8f1f10" }}>{job.error_message}</p> : null}
+              {job.image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={job.image_url} alt="generated" style={{ width: "100%", borderRadius: 8 }} />
+              ) : null}
+            </div>
+          ) : null}
+        </aside>
+      </div>
+    </main>
+  );
+}

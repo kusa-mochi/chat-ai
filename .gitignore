@@ -1,13 +1,13 @@
 .env
-
-# Python
+.env.local
 __pycache__/
 *.pyc
-
-# Node / Next
+.pytest_cache/
+.mypy_cache/
+.venv/
 node_modules/
-frontend/.next/
-
-# Generated assets
-generated-images/
-backend/generated-images/
+.next/
+dist/
+build/
+coverage/
+backend/data/

@@ -1,70 +1,98 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: story-postgres
+    container_name: chat-ai-postgres
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-chatai}
-      POSTGRES_USER: ${POSTGRES_USER:-chatai}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chatai}
+      POSTGRES_DB: ${POSTGRES_DB:-chat_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-chat_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chat_ai}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chatai} -d ${POSTGRES_DB:-chatai}"]
-      interval: 10s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chat_ai}"]
+      interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
 
   qdrant:
-    image: qdrant/qdrant:v1.12.5
-    container_name: story-qdrant
-    volumes:
-      - qdrant_data:/qdrant/storage
+    image: qdrant/qdrant:latest
+    container_name: chat-ai-qdrant
     ports:
       - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "grep -qi ':18BD' /proc/net/tcp /proc/net/tcp6 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   ollama:
-    image: ollama/ollama:0.6.6
-    container_name: story-ollama
-    volumes:
-      - ollama_data:/root/.ollama
+    image: ollama/ollama:latest
+    container_name: chat-ai-ollama
     ports:
       - "11434:11434"
+    environment:
+      OLLAMA_KEEP_ALIVE: 30m
+      OLLAMA_NUM_PARALLEL: 1
+    volumes:
+      - ollama_data:/root/.ollama
+    gpus: all
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  comfyui:
+    image: ghcr.io/ai-dock/comfyui:latest-cuda
+    container_name: chat-ai-comfyui
+    ports:
+      - "8188:8188"
+    environment:
+      CLI_ARGS: "--listen"
+    volumes:
+      - comfyui_data:/opt/ComfyUI/output
+      - comfyui_models:/opt/ComfyUI/models
+    gpus: all
 
   backend:
     build:
       context: ./backend
-    container_name: story-backend
+    container_name: chat-ai-backend
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-chatai}:${POSTGRES_PASSWORD:-chatai}@postgres:5432/${POSTGRES_DB:-chatai}
-      CORS_ORIGINS: http://localhost:3000
-      LLM_PROVIDER: ollama
-      OLLAMA_BASE_URL: http://ollama:11434
-      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen2.5:7b-instruct}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://chat_ai:chat_ai@postgres:5432/chat_ai}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-story_context}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen2.5:7b}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
-      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
-      VECTOR_URL: http://qdrant:6333
-      VECTOR_COLLECTION: ${VECTOR_COLLECTION:-story_context}
-      GENERATED_IMAGES_DIR: /app/generated-images
-    volumes:
-      - generated_images:/app/generated-images
+      COMFYUI_BASE_URL: ${COMFYUI_BASE_URL:-http://comfyui:8188}
+      COMFYUI_CHECKPOINT: ${COMFYUI_CHECKPOINT:-v1-5-pruned-emaonly.safetensors}
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
       ollama:
-        condition: service_started
+        condition: service_healthy
 
   frontend:
     build:
       context: ./frontend
-    container_name: story-frontend
+    container_name: chat-ai-frontend
     environment:
-      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     depends_on:
@@ -74,4 +102,5 @@ volumes:
   postgres_data:
   qdrant_data:
   ollama_data:
-  generated_images:
+  comfyui_data:
+  comfyui_models:

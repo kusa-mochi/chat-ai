@@ -1,117 +1,93 @@
 # Story Chat AI
 
-日本語の自然言語入力をもとに、AIが「もう一人の登場人物」と「ナレーション」を担当して物語を紡ぐWebアプリです。
-システム全体をDocker Composeで起動し、文脈はVector Search Engine (Qdrant) に蓄積されます。
+日本語の自然言語をチャットで入力し、AIが「登場人物のセリフ」と「ナレーション」を返しながら物語を紡ぐローカルシステムです。
 
-## Stack
-
-- Frontend: Next.js (App Router) + TypeScript (`strict: true`)
-- Backend: FastAPI + SQLAlchemy + PostgreSQL
-- Vector Search Engine: Qdrant
-- LLM Runtime: Ollama (Docker container)
+- Frontend: Next.js + TypeScript (strict)
+- Backend: FastAPI
+- DB: PostgreSQL
+- Vector Search: Qdrant
+- Local LLM: Ollama
+- Image Generation: ComfyUI + Stable Diffusion
 - Orchestration: Docker Compose
 
-## Features
+## 1. 前提
 
-- チャット入力から物語生成（日本語）
-- AIが登場人物セリフ (`ai_character`) とナレーション (`narration`) を生成
-- 新しい物語の作成と複数物語の保存
-- 縦スクロールで過去ログを遡って閲覧
-- 物語ごとの設定調整
-	- コンテキストサイズ
-	- プレプロンプト
-	- AI登場人物名
-	- 人格設定
-	- Temperature
-- 任意テキスト/任意発話から挿絵生成
-- 任意地点までの巻き戻し（以降の発話を非アクティブ化）
-- 発話内容のベクトル蓄積と類似検索コンテキスト利用
+- Windows + Docker Desktop + WSL2
+- NVIDIA GPU (VRAM 8GB想定)
+- NVIDIA Container Toolkit が有効
 
-## Project Layout
+## 2. 環境変数
 
-```
-.
-├── backend
-│   ├── app
-│   │   ├── routes
-│   │   ├── ai.py
-│   │   ├── image_service.py
-│   │   ├── main.py
-│   │   ├── models.py
-│   │   ├── schemas.py
-│   │   └── vector_store.py
-│   ├── Dockerfile
-│   └── requirements.txt
-├── frontend
-│   ├── src
-│   │   ├── app
-│   │   └── lib
-│   └── Dockerfile
-├── docker-compose.yml
-└── .env.example
+プロジェクトルートで `.env` を作成します。
+
+```env
+POSTGRES_DB=chat_ai
+POSTGRES_USER=chat_ai
+POSTGRES_PASSWORD=chat_ai
+DATABASE_URL=postgresql+psycopg://chat_ai:chat_ai@postgres:5432/chat_ai
+
+QDRANT_URL=http://qdrant:6333
+QDRANT_COLLECTION=story_context
+
+OLLAMA_BASE_URL=http://ollama:11434
+# ここは運用する uncensored 系 Qwen モデルタグに変更可能
+OLLAMA_CHAT_MODEL=qwen2.5:7b
+OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+
+COMFYUI_BASE_URL=http://comfyui:8188
+COMFYUI_CHECKPOINT=v1-5-pruned-emaonly.safetensors
+
+BACKEND_CORS_ORIGINS=http://localhost:3000
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
-## Quick Start
+## 3. 起動
 
-1. 環境変数ファイルを作成
-
-```bash
-cp .env.example .env
+```powershell
+docker compose up -d --build
 ```
 
-2. Ollamaモデルを取得（初回のみ）
+## 4. モデルの準備
 
-```bash
-docker compose up -d ollama
-docker compose exec ollama ollama pull qwen2.5:7b-instruct
-docker compose exec ollama ollama pull nomic-embed-text
+Ollama コンテナに入り、チャットモデルと埋め込みモデルを pull します。
+
+```powershell
+docker exec -it chat-ai-ollama ollama pull qwen2.5:7b
+docker exec -it chat-ai-ollama ollama pull nomic-embed-text
 ```
 
-3. コンテナ起動
+必要に応じて、8GB VRAMで動作する uncensored 系 Qwen タグへ差し替えてください。
 
-```bash
-docker compose up --build
+## 5. 利用URL
+
+- Frontend: http://localhost:3000
+- Backend OpenAPI: http://localhost:8000/docs
+- Qdrant: http://localhost:6333/dashboard
+- ComfyUI: http://localhost:8188
+
+## 6. 主な機能
+
+- チャットUIで物語を継続生成
+- AIはセリフ(dialogue)とナレーション(narration)を分けて返答
+- 入出力テキストをQdrantへ蓄積して文脈再利用
+- 物語ごとにコンテキストサイズ、プレプロンプト、人格設定を調整
+- 任意テキスト(段落/セリフ/ナレーション)から挿絵生成
+- 任意メッセージ位置から分岐して「途中からやり直し」
+- 物語は複数保存でき、縦スクロールで過去を遡読可能
+
+## 7. 停止
+
+```powershell
+docker compose down
 ```
 
-4. ブラウザでアクセス
+## 8. トラブルシュート
 
-- Frontend: `http://localhost:3000`
-- Backend API: `http://localhost:8000/api/v1`
-- Qdrant: `http://localhost:6333`
-- Ollama: `http://localhost:11434`
-
-## API Overview
-
-- `GET /api/v1/health`
-- `POST /api/v1/stories` 新規物語
-- `GET /api/v1/stories` 物語一覧
-- `GET /api/v1/stories/{story_id}` 物語詳細
-- `GET /api/v1/stories/{story_id}/settings` 設定取得
-- `PUT /api/v1/stories/{story_id}/settings` 設定更新
-- `GET /api/v1/stories/{story_id}/entries` 発話履歴（`before_entry_id` 対応）
-- `POST /api/v1/stories/{story_id}/chat` 物語進行
-- `POST /api/v1/stories/{story_id}/rewind` 巻き戻し
-- `POST /api/v1/stories/{story_id}/images` 挿絵生成
-- `GET /api/v1/stories/{story_id}/images` 挿絵一覧
-
-## Notes
-
-- LAN内で完結するため、テキスト生成と埋め込みはOllamaコンテナを利用します。
-- モデル未取得時やOllama到達不可時は、テキスト生成/埋め込みともにフォールバック動作します。
-- 現在の挿絵生成はLAN-onlyモードとしてSVGベースのローカル生成です。
-
-## Requirement Mapping
-
-- チャット形式で日本語入力し、AIが物語を継続: 対応
-- AIがコンテナ上で稼働: 対応 (`backend` + `ollama`)
-- AIが登場人物とナレーションを担当: 対応 (`ai_character`, `narration`)
-- Webブラウザ利用: 対応 (`frontend`)
-- システム全体をDocker Compose管理: 対応
-- 入力/生成文脈をVector Search Engineへ蓄積: 対応 (`qdrant`)
-- 物語ごとの設定画面: 対応
-- 任意テキストから挿絵生成: 対応
-- 途中からやり直し: 対応 (rewind)
-- 縦スクロールで過去閲覧: 対応
-- 新しい物語ボタン: 対応
-- 複数物語保存: 対応
-- フロントはNext.js + TypeScript strict: 対応
+- Ollamaモデル未取得で 500 が出る
+  - `ollama pull` を実行してから再試行
+- 画像生成が timeout になる
+  - ComfyUI 側にチェックポイントが未配置の可能性
+  - `COMFYUI_CHECKPOINT` を実在ファイル名に合わせる
+- GPUメモリ不足
+  - `OLLAMA_NUM_PARALLEL=1` を維持
+  - Q4 量子化モデルを使う
