@@ -50,15 +50,12 @@ services:
       start_period: 15s
 
   comfyui:
-    image: ghcr.io/ai-dock/comfyui:latest-cuda
+    image: runpod/comfyui:latest-5090
     container_name: chat-ai-comfyui
     ports:
       - "8188:8188"
-    environment:
-      CLI_ARGS: "--listen"
     volumes:
-      - comfyui_data:/opt/ComfyUI/output
-      - comfyui_models:/opt/ComfyUI/models
+      - comfyui_workspace:/workspace/runpod-slim
     gpus: all
 
   backend:
@@ -72,10 +69,10 @@ services:
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-story_context}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen2.5:7b}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen2.5-7b-instruct-uncensored-q4km:latest}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
       COMFYUI_BASE_URL: ${COMFYUI_BASE_URL:-http://comfyui:8188}
-      COMFYUI_CHECKPOINT: ${COMFYUI_CHECKPOINT:-v1-5-pruned-emaonly.safetensors}
+      COMFYUI_CHECKPOINT: ${COMFYUI_CHECKPOINT:-animagine-xl-3.1.safetensors}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
     ports:
       - "8000:8000"
@@ -104,3 +101,4 @@ volumes:
   ollama_data:
   comfyui_data:
   comfyui_models:
+  comfyui_workspace:

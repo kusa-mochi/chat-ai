@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db.session import get_db
 from app.models.story import Story
 from app.models.story_settings import StorySettings
@@ -13,10 +14,10 @@ router = APIRouter(prefix="/api/stories", tags=["stories"])
 
 @router.post("", response_model=StoryOut)
 def create_story(payload: StoryCreate, db: Session = Depends(get_db)) -> Story:
-    story = Story(title=payload.title)
-    settings = StorySettings(story=story)
+    story = Story(title=payload.title, llm_model=settings.ollama_chat_model)
+    story_settings = StorySettings(story=story)
     db.add(story)
-    db.add(settings)
+    db.add(story_settings)
     db.commit()
     db.refresh(story)
     return story

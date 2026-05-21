@@ -1,4 +1,6 @@
+import asyncio
 import json
+import re
 from typing import Iterable
 
 import httpx
@@ -12,11 +14,13 @@ def _build_system_prompt(story_settings: StorySettings) -> str:
     return (
         "あなたは物語生成AIです。ユーザーの入力を受けて、日本語で物語を継続してください。\n"
         "あなたはユーザー以外の登場人物とナレーションを担当します。\n"
+        "最重要: [dialogue] では登場人物名として自然な話し言葉で返答してください。\n"
+        "説明口調・翻訳調・ガイド口調は禁止です。\n"
         "出力形式は必ず次の2つの見出しを含めてください。\n"
         "[dialogue]\n"
-        "(登場人物のセリフ)\n"
+        "(登場人物のセリフのみ。地の文や解説は書かない)\n"
         "[narration]\n"
-        "(情景や行動の地の文)\n"
+        "(情景や行動の地の文。不要なら空で可)\n"
         f"登場人物名: {story_settings.character_name}\n"
         f"人格設定: {story_settings.character_persona}\n"
         f"追加プレプロンプト: {story_settings.preprompt}\n"
@@ -26,12 +30,110 @@ def _build_system_prompt(story_settings: StorySettings) -> str:
 def _history_to_messages(history: Iterable[Message]) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for message in history:
-        role = "assistant" if message.role == "assistant" else "user"
-        items.append({"role": role, "content": message.content})
+        if message.role != "assistant":
+            items.append({"role": "user", "content": message.content})
+            continue
+
+        if message.kind == "dialogue":
+            content = f"[dialogue]\n{message.content}\n[narration]\n"
+        elif message.kind == "narration":
+            content = f"[dialogue]\n\n[narration]\n{message.content}"
+        else:
+            content = message.content
+        items.append({"role": "assistant", "content": content})
     return items
 
 
-def _parse_dual_response(raw_text: str) -> tuple[str, str]:
+def _fallback_dialogue(user_input: str) -> str:
+    if "?" in user_input or "？" in user_input:
+        return "うん、できる範囲で答えるね。もう少し詳しく教えて。"
+    return "ごめんね、もう少し詳しく教えてくれる？"
+
+
+def _looks_like_meta_text(text: str) -> bool:
+    markers = (
+        "この文章を",
+        "文章にした",
+        "日本語の文章",
+        "以下は",
+        "結論",
+        "台詞を",
+        "翻訳",
+        "英語",
+        "You are",
+        "helpful assistant",
+        "meaning",
+    )
+    lowered = text.lower()
+    return any(marker.lower() in lowered for marker in markers)
+
+
+def _normalize_text_for_compare(text: str) -> str:
+    lowered = text.strip().lower()
+    return re.sub(r"[\s\-_.!！?？'\"「」『』:：、。,]", "", lowered)
+
+
+def _contains_japanese(text: str) -> bool:
+    return re.search(r"[ぁ-んァ-ン一-龯]", text) is not None
+
+
+def _is_invalid_dialogue(dialogue: str, character_name: str) -> bool:
+    if not dialogue:
+        return True
+
+    stripped = dialogue.strip()
+    if len(stripped) < 4:
+        return True
+
+    if _looks_like_meta_text(stripped):
+        return True
+
+    normalized_dialogue = _normalize_text_for_compare(stripped)
+    normalized_name = _normalize_text_for_compare(character_name)
+    if normalized_name and normalized_dialogue == normalized_name:
+        return True
+
+    if not _contains_japanese(stripped):
+        return True
+
+    if stripped.startswith(("(", "（")) and re.search(r"[A-Za-z]{3,}", stripped):
+        return True
+
+    return False
+
+
+def _sanitize_narration(narration: str) -> str:
+    cleaned = narration.strip()
+    if not cleaned:
+        return ""
+
+    if _looks_like_meta_text(cleaned):
+        return ""
+
+    if len(cleaned) > 280 and ("以下" in cleaned or re.search(r"\b[1-3][\.)]", cleaned)):
+        return ""
+
+    if len(cleaned) > 420:
+        return ""
+
+    return cleaned
+
+
+def _extract_first_spoken_line(text: str) -> str:
+    quote_match = re.search(r"[「『](.+?)[」』]", text, flags=re.DOTALL)
+    if quote_match:
+        return quote_match.group(1).strip()
+
+    for line in text.splitlines():
+        candidate = line.strip().lstrip("-* ")
+        if candidate in {"[dialogue]", "[narration]"}:
+            continue
+        if candidate:
+            return candidate
+    return ""
+
+
+def _parse_dual_response(raw_text: str, character_name: str, user_input: str) -> tuple[str, str]:
     dialogue = ""
     narration = ""
 
@@ -41,10 +143,41 @@ def _parse_dual_response(raw_text: str) -> tuple[str, str]:
         dialogue = dialogue_part.strip()
         narration = narration_part.strip()
     else:
-        dialogue = raw_text.strip()
-        narration = ""
+        narration = raw_text.strip()
+        dialogue = _extract_first_spoken_line(raw_text)
+
+    if len(dialogue) > 180:
+        dialogue = ""
+
+    if _is_invalid_dialogue(dialogue, character_name):
+        dialogue = _fallback_dialogue(user_input)
+
+    narration = _sanitize_narration(narration)
 
     return dialogue, narration
+
+
+async def _post_ollama(path: str, payload: dict, timeout_seconds: float) -> httpx.Response:
+    last_exc: httpx.HTTPError | None = None
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.post(f"{settings.ollama_base_url}{path}", json=payload)
+                response.raise_for_status()
+                return response
+        except (httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+            last_exc = exc
+            if attempt == 0:
+                await asyncio.sleep(0.6)
+                continue
+            raise
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            raise
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Unexpected Ollama request failure")
 
 
 async def chat_story(
@@ -78,13 +211,15 @@ async def chat_story(
         },
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        response = await client.post(f"{settings.ollama_base_url}/api/chat", json=payload)
-        response.raise_for_status()
-        data = response.json()
+    response = await _post_ollama(
+        "/api/chat",
+        payload,
+        timeout_seconds=settings.ollama_chat_timeout_seconds,
+    )
+    data = response.json()
 
     raw_text = data.get("message", {}).get("content", "")
-    return _parse_dual_response(raw_text)
+    return _parse_dual_response(raw_text, story_settings.character_name, user_input)
 
 
 async def embed_text(text: str) -> list[float]:
@@ -92,10 +227,12 @@ async def embed_text(text: str) -> list[float]:
         "model": settings.ollama_embedding_model,
         "prompt": text,
     }
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(f"{settings.ollama_base_url}/api/embeddings", json=payload)
-        response.raise_for_status()
-        data = response.json()
+    response = await _post_ollama(
+        "/api/embeddings",
+        payload,
+        timeout_seconds=settings.ollama_embedding_timeout_seconds,
+    )
+    data = response.json()
 
     embedding = data.get("embedding")
     if embedding is None:

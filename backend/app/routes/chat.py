@@ -1,3 +1,5 @@
+import logging
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -12,6 +14,7 @@ from app.services.vector_service import search_context, upsert_context
 
 
 router = APIRouter(prefix="/api/stories/{story_id}", tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/messages", response_model=MessageListOut)
@@ -81,16 +84,38 @@ async def send_chat(story_id: str, payload: ChatSendIn, db: Session = Depends(ge
     )
     history.reverse()
 
-    query_vector = await embed_text(payload.content)
-    retrieved_context = await search_context(story_id=story_id, vector=query_vector, limit=5)
+    generation_error: str | None = None
+    try:
+        query_vector = await embed_text(payload.content)
+        retrieved_context = await search_context(story_id=story_id, vector=query_vector, limit=5)
 
-    dialogue, narration = await chat_story(
-        story_settings=story_settings,
-        llm_model=story.llm_model,
-        history=history,
-        user_input=payload.content,
-        retrieved_context=retrieved_context,
-    )
+        dialogue, narration = await chat_story(
+            story_settings=story_settings,
+            llm_model=story.llm_model,
+            history=history,
+            user_input=payload.content,
+            retrieved_context=retrieved_context,
+        )
+    except httpx.ReadTimeout as exc:
+        generation_error = f"timeout: {exc}"
+        dialogue = "ごめん、いま応答生成に時間がかかりすぎています。少し待ってから再送するか、入力を短くして試してみてください。"
+        narration = "湯けむりの向こうで、会話は一度途切れた。もう一度、落ち着いて言葉を選び直せば物語は続けられる。"
+    except httpx.HTTPError as exc:
+        generation_error = f"http-error: {exc}"
+        dialogue = "ごめん、いまAIモデルとの通信が不安定みたい。少し時間をおいて、もう一度送ってくれる？"
+        narration = "通信が揺らぎ、物語はひと呼吸だけ足踏みした。"
+    except Exception as exc:
+        generation_error = f"unexpected: {exc}"
+        dialogue = "ごめん、いま返答を作る途中で問題が起きました。入力を少し変えてもう一度試してみてください。"
+        narration = "物語の歯車が一瞬きしみ、場面は静かに止まった。"
+
+    if generation_error is not None:
+        logger.warning(
+            "Chat generation fallback used story_id=%s branch_id=%s reason=%s",
+            story_id,
+            payload.branch_id,
+            generation_error,
+        )
 
     dialogue_message = Message(
         story_id=story_id,

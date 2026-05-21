@@ -30,9 +30,11 @@ QDRANT_URL=http://qdrant:6333
 QDRANT_COLLECTION=story_context
 
 OLLAMA_BASE_URL=http://ollama:11434
-# ここは運用する uncensored 系 Qwen モデルタグに変更可能
-OLLAMA_CHAT_MODEL=qwen2.5:7b
+# backend/llm_models の GGUF を ollama create したモデル名
+OLLAMA_CHAT_MODEL=qwen2.5-7b-instruct-uncensored-q4km:latest
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+OLLAMA_CHAT_TIMEOUT_SECONDS=300
+OLLAMA_EMBEDDING_TIMEOUT_SECONDS=120
 
 COMFYUI_BASE_URL=http://comfyui:8188
 COMFYUI_CHECKPOINT=v1-5-pruned-emaonly.safetensors
@@ -49,14 +51,41 @@ docker compose up -d --build
 
 ## 4. モデルの準備
 
-Ollama コンテナに入り、チャットモデルと埋め込みモデルを pull します。
+### 4.1 チャットモデル (GGUF) を Ollama に登録
+
+`backend/llm_models/` にある GGUF を Ollama コンテナへコピーし、モデルとして登録します。
 
 ```powershell
-docker exec -it chat-ai-ollama ollama pull qwen2.5:7b
-docker exec -it chat-ai-ollama ollama pull nomic-embed-text
+docker compose up -d ollama
+
+$ModelName = "qwen2.5-7b-instruct-uncensored-q4km"
+$Gguf = "backend/llm_models/Qwen2.5-7B-Instruct-Uncensored.Q4_K_M.gguf"
+$ModelfileLocal = "backend/llm_models/Modelfile.$ModelName"
+
+@"
+FROM /models/Qwen2.5-7B-Instruct-Uncensored.Q4_K_M.gguf
+PARAMETER num_ctx 4096
+"@ | Set-Content -Path $ModelfileLocal -Encoding ascii
+
+docker compose exec ollama mkdir -p /models
+docker cp $Gguf "chat-ai-ollama:/models/Qwen2.5-7B-Instruct-Uncensored.Q4_K_M.gguf"
+docker cp $ModelfileLocal "chat-ai-ollama:/models/Modelfile.$ModelName"
+docker compose exec ollama ollama create $ModelName -f /models/Modelfile.$ModelName
+docker compose exec ollama ollama list
 ```
 
-必要に応じて、8GB VRAMで動作する uncensored 系 Qwen タグへ差し替えてください。
+### 4.2 埋め込みモデルを pull
+
+```powershell
+docker compose exec ollama ollama pull nomic-embed-text
+```
+
+最後に backend を再作成して環境変数の反映を確認します。
+
+```powershell
+docker compose up -d --force-recreate backend
+docker compose exec backend printenv OLLAMA_CHAT_MODEL OLLAMA_EMBEDDING_MODEL
+```
 
 ## 5. 利用URL
 
@@ -84,7 +113,7 @@ docker compose down
 ## 8. トラブルシュート
 
 - Ollamaモデル未取得で 500 が出る
-  - `ollama pull` を実行してから再試行
+  - 上記 4.1/4.2 を実行してから再試行
 - 画像生成が timeout になる
   - ComfyUI 側にチェックポイントが未配置の可能性
   - `COMFYUI_CHECKPOINT` を実在ファイル名に合わせる

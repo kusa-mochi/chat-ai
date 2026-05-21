@@ -11,3 +11,5 @@ dist/
 build/
 coverage/
 backend/data/
+backend/llm_models/
+*.log

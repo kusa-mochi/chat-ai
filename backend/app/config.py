@@ -1,6 +1,6 @@
+import json
 from typing import List
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,18 +16,29 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://ollama:11434"
     ollama_chat_model: str = "qwen2.5:7b"
     ollama_embedding_model: str = "nomic-embed-text"
+    ollama_chat_timeout_seconds: float = 300.0
+    ollama_embedding_timeout_seconds: float = 120.0
 
     comfyui_base_url: str = "http://comfyui:8188"
     comfyui_checkpoint: str = "v1-5-pruned-emaonly.safetensors"
 
-    backend_cors_origins: List[str] = ["http://localhost:3000"]
+    backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
-    @field_validator("backend_cors_origins", mode="before")
-    @classmethod
-    def _split_csv_origins(cls, value: str | List[str]) -> List[str]:
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
+    @property
+    def backend_cors_origins_list(self) -> List[str]:
+        raw = self.backend_cors_origins.strip()
+        if not raw:
+            return []
+
+        if raw.startswith("["):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+
+        return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 settings = Settings()
