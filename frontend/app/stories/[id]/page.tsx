@@ -29,8 +29,8 @@ const defaultSettings: StorySettings = {
   preprompt: "",
   character_name: "語り部の相棒",
   character_persona: "親密で文学的、比喩を交えつつ物語を前へ進める。",
-  temperature: 0.9,
-  top_p: 0.9,
+  temperature: 0.6,
+  top_p: 0.8,
 };
 
 

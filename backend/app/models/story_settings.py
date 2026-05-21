@@ -20,7 +20,7 @@ class StorySettings(Base):
         default="親密で文学的、比喩を交えつつ物語を前へ進める。",
         nullable=False,
     )
-    temperature: Mapped[float] = mapped_column(Float, default=0.9, nullable=False)
-    top_p: Mapped[float] = mapped_column(Float, default=0.9, nullable=False)
+    temperature: Mapped[float] = mapped_column(Float, default=0.6, nullable=False)
+    top_p: Mapped[float] = mapped_column(Float, default=0.8, nullable=False)
 
     story = relationship("Story", back_populates="settings")

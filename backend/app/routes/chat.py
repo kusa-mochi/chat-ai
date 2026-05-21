@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -84,37 +85,70 @@ async def send_chat(story_id: str, payload: ChatSendIn, db: Session = Depends(ge
     )
     history.reverse()
 
-    generation_error: str | None = None
-    try:
-        query_vector = await embed_text(payload.content)
-        retrieved_context = await search_context(story_id=story_id, vector=query_vector, limit=5)
+    # user_input is appended separately in chat_story; drop the just-saved
+    # user message from history to avoid sending the same utterance twice.
+    if history and history[-1].id == user_message.id:
+        history = history[:-1]
 
-        dialogue, narration = await chat_story(
-            story_settings=story_settings,
-            llm_model=story.llm_model,
-            history=history,
-            user_input=payload.content,
-            retrieved_context=retrieved_context,
-        )
-    except httpx.ReadTimeout as exc:
-        generation_error = f"timeout: {exc}"
-        dialogue = "ごめん、いま応答生成に時間がかかりすぎています。少し待ってから再送するか、入力を短くして試してみてください。"
-        narration = "湯けむりの向こうで、会話は一度途切れた。もう一度、落ち着いて言葉を選び直せば物語は続けられる。"
-    except httpx.HTTPError as exc:
-        generation_error = f"http-error: {exc}"
-        dialogue = "ごめん、いまAIモデルとの通信が不安定みたい。少し時間をおいて、もう一度送ってくれる？"
-        narration = "通信が揺らぎ、物語はひと呼吸だけ足踏みした。"
-    except Exception as exc:
-        generation_error = f"unexpected: {exc}"
-        dialogue = "ごめん、いま返答を作る途中で問題が起きました。入力を少し変えてもう一度試してみてください。"
-        narration = "物語の歯車が一瞬きしみ、場面は静かに止まった。"
+    generation_error: str | None = None
+    dialogue = ""
+    narration = ""
+    last_exc: Exception | None = None
+    retry_attempted = False
+    for attempt in range(2):
+        try:
+            query_vector = await embed_text(payload.content)
+            retrieved_context = await search_context(story_id=story_id, vector=query_vector, limit=5)
+
+            dialogue, narration = await chat_story(
+                story_settings=story_settings,
+                llm_model=story.llm_model,
+                history=history,
+                user_input=payload.content,
+                retrieved_context=retrieved_context,
+            )
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 0:
+                retry_attempted = True
+                logger.info(
+                    "Retrying chat generation story_id=%s branch_id=%s after error=%s",
+                    story_id,
+                    payload.branch_id,
+                    exc,
+                )
+                await asyncio.sleep(0.7)
+                continue
+
+    if last_exc is not None:
+        if isinstance(last_exc, httpx.ReadTimeout):
+            generation_error = f"timeout(after-retry): {last_exc}"
+            dialogue = "ごめん、いま応答生成に時間がかかりすぎています。少し待ってから再送するか、入力を短くして試してみてください。"
+            narration = "湯けむりの向こうで、会話は一度途切れた。もう一度、落ち着いて言葉を選び直せば物語は続けられる。"
+        elif isinstance(last_exc, httpx.HTTPError):
+            generation_error = f"http-error(after-retry): {last_exc}"
+            dialogue = "ごめん、いまAIモデルとの通信が不安定みたい。少し時間をおいて、もう一度送ってくれる？"
+            narration = "通信が揺らぎ、物語はひと呼吸だけ足踏みした。"
+        else:
+            generation_error = f"unexpected(after-retry): {last_exc}"
+            dialogue = "ごめん、いま返答を作る途中で問題が起きました。入力を少し変えてもう一度試してみてください。"
+            narration = "物語の歯車が一瞬きしみ、場面は静かに止まった。"
 
     if generation_error is not None:
         logger.warning(
-            "Chat generation fallback used story_id=%s branch_id=%s reason=%s",
+            "Chat generation fallback used story_id=%s branch_id=%s reason=%s retry_attempted=%s",
             story_id,
             payload.branch_id,
             generation_error,
+            retry_attempted,
+        )
+    elif retry_attempted:
+        logger.info(
+            "Chat generation succeeded after retry story_id=%s branch_id=%s",
+            story_id,
+            payload.branch_id,
         )
 
     dialogue_message = Message(

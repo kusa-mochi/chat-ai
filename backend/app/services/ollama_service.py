@@ -15,6 +15,9 @@ def _build_system_prompt(story_settings: StorySettings) -> str:
         "あなたは物語生成AIです。ユーザーの入力を受けて、日本語で物語を継続してください。\n"
         "あなたはユーザー以外の登場人物とナレーションを担当します。\n"
         "最重要: [dialogue] では登場人物名として自然な話し言葉で返答してください。\n"
+        "ユーザーの直前の問いや依頼に、まず短く直接答えてください。\n"
+        "ユーザー発話の言い換え・要約・採点・選択肢問題化は禁止です。\n"
+        "『という問いは』『想像上のシチュエーション』のような解説文で始めないでください。\n"
         "説明口調・翻訳調・ガイド口調は禁止です。\n"
         "出力形式は必ず次の2つの見出しを含めてください。\n"
         "[dialogue]\n"
@@ -63,6 +66,15 @@ def _looks_like_meta_text(text: str) -> bool:
         "You are",
         "helpful assistant",
         "meaning",
+        "という問い",
+        "推測すると",
+        "想像上のシチュエーション",
+        "最も適切",
+        "選んでください",
+        "選択肢",
+        "答案",
+        "解説",
+        "文脈から",
     )
     lowered = text.lower()
     return any(marker.lower() in lowered for marker in markers)
@@ -77,7 +89,17 @@ def _contains_japanese(text: str) -> bool:
     return re.search(r"[ぁ-んァ-ン一-龯]", text) is not None
 
 
-def _is_invalid_dialogue(dialogue: str, character_name: str) -> bool:
+def _looks_like_choice_or_template(text: str) -> bool:
+    if re.search(r"(?m)^[A-EＡ-Ｅ][\.:\)]\s", text):
+        return True
+    if "[解説]" in text or "[答案]" in text:
+        return True
+    if re.search(r"(?m)^[-*]\s", text):
+        return True
+    return False
+
+
+def _is_invalid_dialogue(dialogue: str, character_name: str, user_input: str) -> bool:
     if not dialogue:
         return True
 
@@ -93,7 +115,14 @@ def _is_invalid_dialogue(dialogue: str, character_name: str) -> bool:
     if normalized_name and normalized_dialogue == normalized_name:
         return True
 
+    normalized_input = _normalize_text_for_compare(user_input)
+    if normalized_input and normalized_dialogue == normalized_input:
+        return True
+
     if not _contains_japanese(stripped):
+        return True
+
+    if _looks_like_choice_or_template(stripped):
         return True
 
     if stripped.startswith(("(", "（")) and re.search(r"[A-Za-z]{3,}", stripped):
@@ -104,6 +133,7 @@ def _is_invalid_dialogue(dialogue: str, character_name: str) -> bool:
 
 def _sanitize_narration(narration: str) -> str:
     cleaned = narration.strip()
+    cleaned = cleaned.replace("[dialogue]", "").replace("[narration]", "").strip()
     if not cleaned:
         return ""
 
@@ -114,6 +144,9 @@ def _sanitize_narration(narration: str) -> str:
         return ""
 
     if len(cleaned) > 420:
+        return ""
+
+    if _looks_like_choice_or_template(cleaned):
         return ""
 
     return cleaned
@@ -136,12 +169,18 @@ def _extract_first_spoken_line(text: str) -> str:
 def _parse_dual_response(raw_text: str, character_name: str, user_input: str) -> tuple[str, str]:
     dialogue = ""
     narration = ""
+    used_dual_sections = False
 
     if "[dialogue]" in raw_text and "[narration]" in raw_text:
         parts = raw_text.split("[dialogue]", 1)[1]
-        dialogue_part, narration_part = parts.split("[narration]", 1)
-        dialogue = dialogue_part.strip()
-        narration = narration_part.strip()
+        if "[narration]" in parts:
+            used_dual_sections = True
+            dialogue_part, narration_part = parts.split("[narration]", 1)
+            dialogue = dialogue_part.strip()
+            narration = narration_part.strip()
+        else:
+            narration = raw_text.strip()
+            dialogue = _extract_first_spoken_line(raw_text)
     else:
         narration = raw_text.strip()
         dialogue = _extract_first_spoken_line(raw_text)
@@ -149,10 +188,20 @@ def _parse_dual_response(raw_text: str, character_name: str, user_input: str) ->
     if len(dialogue) > 180:
         dialogue = ""
 
-    if _is_invalid_dialogue(dialogue, character_name):
+    used_fallback_dialogue = False
+    if _is_invalid_dialogue(dialogue, character_name, user_input):
         dialogue = _fallback_dialogue(user_input)
+        used_fallback_dialogue = True
+
+    if used_fallback_dialogue and not used_dual_sections:
+        narration = ""
 
     narration = _sanitize_narration(narration)
+    if narration and dialogue:
+        normalized_dialogue = _normalize_text_for_compare(dialogue)
+        normalized_narration = _normalize_text_for_compare(narration)
+        if normalized_dialogue and normalized_dialogue in normalized_narration:
+            narration = ""
 
     return dialogue, narration
 
