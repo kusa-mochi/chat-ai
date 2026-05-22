@@ -2,7 +2,9 @@ import asyncio
 import threading
 from queue import Queue
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal, get_db
@@ -18,6 +20,20 @@ router = APIRouter(prefix="/api/stories/{story_id}/illustrations", tags=["illust
 _JOB_QUEUE: Queue[str] = Queue()
 _WORKER_GUARD = threading.Lock()
 _WORKER_STARTED = False
+
+
+def _serialize_job(job: IllustrationJob, request: Request) -> IllustrationOut:
+    result = IllustrationOut.model_validate(job)
+    if job.image_url:
+        public_url = str(
+            request.url_for(
+                "get_illustration_image",
+                story_id=job.story_id,
+                job_id=job.id,
+            )
+        )
+        result = result.model_copy(update={"image_url": public_url})
+    return result
 
 
 def _run_generation(job_id: str) -> None:
@@ -69,8 +85,9 @@ def _ensure_worker_started() -> None:
 def create_illustration_job(
     story_id: str,
     payload: IllustrationCreateIn,
+    request: Request,
     db: Session = Depends(get_db),
-) -> IllustrationJob:
+) -> IllustrationOut:
     story = db.get(Story, story_id)
     if story is None:
         raise HTTPException(status_code=404, detail="Story not found")
@@ -87,12 +104,42 @@ def create_illustration_job(
 
     _ensure_worker_started()
     _JOB_QUEUE.put(job.id)
-    return job
+    return _serialize_job(job, request)
 
 
 @router.get("/{job_id}", response_model=IllustrationOut)
-def get_illustration_job(story_id: str, job_id: str, db: Session = Depends(get_db)) -> IllustrationJob:
+def get_illustration_job(
+    story_id: str,
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> IllustrationOut:
     job = db.get(IllustrationJob, job_id)
     if job is None or job.story_id != story_id:
         raise HTTPException(status_code=404, detail="Illustration job not found")
-    return job
+    return _serialize_job(job, request)
+
+
+@router.get("/{job_id}/image")
+async def get_illustration_image(story_id: str, job_id: str, db: Session = Depends(get_db)) -> Response:
+    job = db.get(IllustrationJob, job_id)
+    if job is None or job.story_id != story_id:
+        raise HTTPException(status_code=404, detail="Illustration job not found")
+    if job.status != "done" or not job.image_url:
+        raise HTTPException(status_code=404, detail="Illustration image not ready")
+
+    source_url = job.image_url.strip()
+    if not source_url:
+        raise HTTPException(status_code=404, detail="Illustration image not ready")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0, trust_env=False, follow_redirects=True) as client:
+            upstream = await client.get(source_url)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch illustration image: {exc}") from exc
+
+    if upstream.status_code >= 400:
+        raise HTTPException(status_code=502, detail="Illustration image upstream returned an error")
+
+    media_type = upstream.headers.get("content-type", "image/png")
+    return Response(content=upstream.content, media_type=media_type)

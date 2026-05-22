@@ -7,6 +7,14 @@ import httpx
 from app.config import settings
 
 
+# Keep defaults conservative enough for stability, but high enough
+# to avoid half-baked looking outputs.
+IMAGE_STEPS = 24
+IMAGE_CFG = 7
+IMAGE_WIDTH = 768
+IMAGE_HEIGHT = 768
+
+
 def _workflow(prompt_text: str, checkpoint_name: str) -> dict[str, Any]:
     seed = random.randint(1, 2_147_483_647)
     return {
@@ -14,8 +22,8 @@ def _workflow(prompt_text: str, checkpoint_name: str) -> dict[str, Any]:
             "class_type": "KSampler",
             "inputs": {
                 "seed": seed,
-                "steps": 8,
-                "cfg": 7,
+                "steps": IMAGE_STEPS,
+                "cfg": IMAGE_CFG,
                 "sampler_name": "euler",
                 "scheduler": "normal",
                 "denoise": 1,
@@ -34,8 +42,8 @@ def _workflow(prompt_text: str, checkpoint_name: str) -> dict[str, Any]:
         "5": {
             "class_type": "EmptyLatentImage",
             "inputs": {
-                "width": 512,
-                "height": 512,
+                "width": IMAGE_WIDTH,
+                "height": IMAGE_HEIGHT,
                 "batch_size": 1,
             },
         },
@@ -43,8 +51,8 @@ def _workflow(prompt_text: str, checkpoint_name: str) -> dict[str, Any]:
             "class_type": "CLIPTextEncode",
             "inputs": {
                 "text": (
-                    "masterpiece, best quality, cute, kawaii, "
-                    "japanese anime style, expressive face, soft lighting, "
+                    "masterpiece, best quality, ultra detailed, "
+                    "japanese anime style, expressive face, cinematic lighting, "
                     f"{prompt_text}"
                 ),
                 "clip": ["4", 1],
@@ -53,7 +61,10 @@ def _workflow(prompt_text: str, checkpoint_name: str) -> dict[str, Any]:
         "7": {
             "class_type": "CLIPTextEncode",
             "inputs": {
-                "text": "low quality, blurry, bad anatomy, extra fingers, watermark, text, logo",
+                "text": (
+                    "low quality, blurry, unfinished, sketch, bad anatomy, "
+                    "extra fingers, watermark, text, logo"
+                ),
                 "clip": ["4", 1],
             },
         },
