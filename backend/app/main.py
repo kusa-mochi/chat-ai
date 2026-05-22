@@ -38,6 +38,7 @@ def _apply_legacy_schema_patches() -> None:
     statements = [
         "ALTER TABLE stories ADD COLUMN IF NOT EXISTS active_branch_id VARCHAR(36) NOT NULL DEFAULT 'main'",
         "ALTER TABLE stories ADD COLUMN IF NOT EXISTS llm_model VARCHAR(120) NOT NULL DEFAULT 'qwen2.5-7b-instruct-uncensored-q4km:latest'",
+        "ALTER TABLE stories ALTER COLUMN llm_model SET DEFAULT 'qwen2.5-7b-instruct-uncensored-q4km:latest'",
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS branch_id VARCHAR(36) NOT NULL DEFAULT 'main'",
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS parent_message_id VARCHAR(36)",
         "ALTER TABLE story_settings ADD COLUMN IF NOT EXISTS id VARCHAR(36)",
