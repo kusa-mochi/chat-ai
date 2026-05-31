@@ -69,7 +69,7 @@ services:
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-story_context}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
-      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen2.5:7b}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen2.5-7b-instruct-uncensored-q4km:latest}
       OLLAMA_EMBEDDING_MODEL: ${OLLAMA_EMBEDDING_MODEL:-nomic-embed-text}
       COMFYUI_BASE_URL: ${COMFYUI_BASE_URL:-http://comfyui:8188}
       COMFYUI_CHECKPOINT: ${COMFYUI_CHECKPOINT:-animagine-xl-3.1.safetensors}
