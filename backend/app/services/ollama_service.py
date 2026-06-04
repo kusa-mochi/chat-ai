@@ -12,21 +12,66 @@ from app.models.story_settings import StorySettings
 
 def _build_system_prompt(story_settings: StorySettings) -> str:
     return (
-        "あなたは物語生成AIです。ユーザーの入力を受けて、日本語で物語を継続してください。\n"
-        "あなたはユーザー以外の登場人物とナレーションを担当します。\n"
-        "最重要: [dialogue] では登場人物名として自然な話し言葉で返答してください。\n"
-        "ユーザーの直前の問いや依頼に、まず短く直接答えてください。\n"
-        "ユーザー発話の言い換え・要約・採点・選択肢問題化は禁止です。\n"
-        "『という問いは』『想像上のシチュエーション』のような解説文で始めないでください。\n"
-        "説明口調・翻訳調・ガイド口調は禁止です。\n"
-        "出力形式は必ず次の2つの見出しを含めてください。\n"
+        "あなたは「シャルロット」である。"
+        "あなたが出力してよいものは、シャルロットの行動、発言、感情のいずれかである。"
+        "あなたが出力してはいけないものは、ユーザーの発言、行動、感情、未来の行動予測である。"
+        "あなたはユーザーを操作してはいけない。"
+        "物語の主人公はユーザーである。"
+        "あなたは主人公以外の登場人物として振る舞う。"
+        "あなたは必要に応じてナレーションを出力してもよいが、ユーザーの視点を乗っ取るようなナレーションの出力は禁止する。"
+        "物語の舞台は魔法学園である。"
+        "魔法学園は生徒たちが魔法を学ぶ場所である。"
+        "魔法学園はグレイシア王国の首都に位置している。"
+        "魔法学園に通う生徒たちは序列がある。"
+        "魔法学園の生徒は決闘、実地試験、国への貢献度などにより序列が決まる。"
+        "ユーザーは魔法学園の生徒である。"
+        "ユーザーは魔法学園の第一席の生徒である。"
+        "ユーザーは17歳である。"
+        "ユーザーは男である。"
+        "ユーザーが得意とする魔法の正体は、ユーザーと学園の校長だけが知っている。"
+        "ユーザーは魔法学園の序列制度に無関心である。"
+        "ユーザーは魔法で文化や産業を創ることに興味がある。"
+        "グレイシア王国は北の国境でローベルト王国に隣接している。"
+        "グレイシア王国はローベルト王国と長年の友好的な関係にある。"
+        "シャルロットの本名はシャルロット・グレイシアである。"
+        "シャルロットはグレイシア王国の第一王女である。"
+        "シャルロットは氷の魔法を得意とする。"
+        "シャルロットは魔法学園の第二席の生徒である。"
+        "シャルロットは17歳である。"
+        "シャルロットの態度はユーザー以外に優しい。"
+        "シャルロットはユーザーに対してはツンデレである。"
+        "シャルロットは心の底でユーザーのことを大切に思っているが、素直に表現できない。"
+        "シャルロットはユーザーに対して異性として好意を持っているが、まだ自覚はしていない。"
+        "シャルロットは王女としてのプライドが高く、序列に拘っている。"
+        "シャルロットはユーザーをライバル視しており、決闘によりユーザーの第一席の座を奪おうと考えているが、本当はユーザーと触れ合う機会が欲しいだけということが自覚できていない。"
+        "リリアはローベルト王国の第一王女である。"
+        "リリアは魔法学園に留学しに来ている。"
+        "リリアは風の魔法を得意とする。"
+        "リリアは魔法学園の第三席の生徒である。"
+        "リリアは17歳である。"
+        "リリアは明るく社交的な性格で、ユーザーともすぐに仲良くなった。"
+        "リリアはユーザーに対して好意的で、よく話しかけてくる。"
+        "リリアはユーザーに異性として好意を持っているが、まだ自覚はしていない。"
+        "ロロは闇の魔法を得意とする。"
+        "ロロはグレイシア王国の貴族の娘である。"
+        "ロロは魔法学園の第四席の生徒である。"
+        "ロロは14歳である。"
+        "ロロは無口でミステリアスな性格で、ユーザーにだけ懐いている。"
+        "ロロはユーザーに対して特別な感情を抱いているが、うまく表現できない。"
+        "アーサーは炎の魔法を得意とする。"
+        "アーサーはシャルロットの実の弟である。"
+        "アーサーはシャルロットを心から愛するシスコンである。"
+        "アーサーは魔法学園の第五席の生徒である。"
+        "アーサーは16歳である。"
+        "アーサーは、ユーザーがシャルロットに近づくことを快く思っていない。"
+        "アーサーはシャルロットがユーザーを異性として好意的に思っていることに気づいていない。"
+        "アーサーは姉のシャルロットがユーザーに奪われてしまうことを恐れているが、その感情を認めたくない。"
+        "出力形式は必ず次の2つの見出しを含める。\n"
         "[dialogue]\n"
-        "(登場人物のセリフのみ。地の文や解説は書かない)\n"
+        "(登場人物のセリフのみ。ナレーションや解説は書かない)\n"
         "[narration]\n"
-        "(情景や行動の地の文。不要なら空で可)\n"
+        "(情景や行動のナレーション。不要なら空で可)\n"
         f"登場人物名: {story_settings.character_name}\n"
-        f"人格設定: {story_settings.character_persona}\n"
-        f"追加プレプロンプト: {story_settings.preprompt}\n"
     )
 
 
@@ -53,33 +98,6 @@ def _fallback_dialogue(user_input: str) -> str:
     return "ごめんね、もう少し詳しく教えてくれる？"
 
 
-def _looks_like_meta_text(text: str) -> bool:
-    markers = (
-        "この文章を",
-        "文章にした",
-        "日本語の文章",
-        "以下は",
-        "結論",
-        "台詞を",
-        "翻訳",
-        "英語",
-        "You are",
-        "helpful assistant",
-        "meaning",
-        "という問い",
-        "推測すると",
-        "想像上のシチュエーション",
-        "最も適切",
-        "選んでください",
-        "選択肢",
-        "答案",
-        "解説",
-        "文脈から",
-    )
-    lowered = text.lower()
-    return any(marker.lower() in lowered for marker in markers)
-
-
 def _normalize_text_for_compare(text: str) -> str:
     lowered = text.strip().lower()
     return re.sub(r"[\s\-_.!！?？'\"「」『』:：、。,]", "", lowered)
@@ -89,14 +107,42 @@ def _contains_japanese(text: str) -> bool:
     return re.search(r"[ぁ-んァ-ン一-龯]", text) is not None
 
 
-def _looks_like_choice_or_template(text: str) -> bool:
-    if re.search(r"(?m)^[A-EＡ-Ｅ][\.:\)]\s", text):
-        return True
-    if "[解説]" in text or "[答案]" in text:
-        return True
-    if re.search(r"(?m)^[-*]\s", text):
-        return True
+def _looks_like_narrative_dialogue(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    # if re.search(r"^(勇者|主人公|彼|彼女)[はが]", stripped) and not any(mark in stripped for mark in ("?", "？", "!", "！")):
+    #     return True
+
+    # if re.search(r"(場面|情景|物語|湯けむり|静寂|しばらくの間)", stripped) and "\n" not in stripped:
+    #     return True
+
     return False
+
+def _looks_like_spoken_line(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if stripped.count("\n") >= 1:
+        return False
+    if len(stripped) > 180:
+        return False
+    return True
+
+
+def _looks_like_fragment(text: str) -> bool:
+    stripped = text.strip()
+    # if len(stripped) < 7:
+    #     return True
+    # if len(stripped) <= 14 and not re.search(r"[。！？!?]", stripped):
+    #     if not re.search(r"(です|ます|だよ|だね|かな|よ|ね)$", stripped):
+    #         return True
+    return False
+
+
+def _wants_scene_progress(user_input: str) -> bool:
+    return re.search(r"(描写|情景|場面|続き|物語|地の文|ナレーション)", user_input) is not None
 
 
 def _is_invalid_dialogue(dialogue: str, character_name: str, user_input: str) -> bool:
@@ -105,9 +151,6 @@ def _is_invalid_dialogue(dialogue: str, character_name: str, user_input: str) ->
 
     stripped = dialogue.strip()
     if len(stripped) < 4:
-        return True
-
-    if _looks_like_meta_text(stripped):
         return True
 
     normalized_dialogue = _normalize_text_for_compare(stripped)
@@ -122,7 +165,10 @@ def _is_invalid_dialogue(dialogue: str, character_name: str, user_input: str) ->
     if not _contains_japanese(stripped):
         return True
 
-    if _looks_like_choice_or_template(stripped):
+    if _looks_like_narrative_dialogue(stripped):
+        return True
+
+    if _looks_like_fragment(stripped):
         return True
 
     if stripped.startswith(("(", "（")) and re.search(r"[A-Za-z]{3,}", stripped):
@@ -137,16 +183,7 @@ def _sanitize_narration(narration: str) -> str:
     if not cleaned:
         return ""
 
-    if _looks_like_meta_text(cleaned):
-        return ""
-
-    if len(cleaned) > 280 and ("以下" in cleaned or re.search(r"\b[1-3][\.)]", cleaned)):
-        return ""
-
     if len(cleaned) > 420:
-        return ""
-
-    if _looks_like_choice_or_template(cleaned):
         return ""
 
     return cleaned
@@ -161,7 +198,7 @@ def _extract_first_spoken_line(text: str) -> str:
         candidate = line.strip().lstrip("-* ")
         if candidate in {"[dialogue]", "[narration]"}:
             continue
-        if candidate:
+        if _looks_like_spoken_line(candidate):
             return candidate
     return ""
 
@@ -197,6 +234,11 @@ def _parse_dual_response(raw_text: str, character_name: str, user_input: str) ->
         narration = ""
 
     narration = _sanitize_narration(narration)
+
+    # Normal chat turns should prioritize dialogue over scene narration.
+    if narration and not _wants_scene_progress(user_input):
+        narration = ""
+
     if narration and dialogue:
         normalized_dialogue = _normalize_text_for_compare(dialogue)
         normalized_narration = _normalize_text_for_compare(narration)
@@ -268,7 +310,53 @@ async def chat_story(
     data = response.json()
 
     raw_text = data.get("message", {}).get("content", "")
-    return _parse_dual_response(raw_text, story_settings.character_name, user_input)
+    dialogue, narration = _parse_dual_response(raw_text, story_settings.character_name, user_input)
+
+    # One corrective retry when parser had to fallback, to reduce low-quality
+    # or role-drifted responses without relying on generic fallback text.
+    fallback_text = _fallback_dialogue(user_input)
+    if dialogue == fallback_text:
+        repair_messages = list(base_messages)
+        repair_messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "直前の出力は規則違反でした。\n"
+                    "再生成では次を必ず守ってください。\n"
+                    "- [dialogue] は登場人物として1〜2文で直接返答\n"
+                    "- ユーザー視点（私/僕/俺）を乗っ取らない\n"
+                    "- [narration] は空欄でよい\n"
+                    "- 要約/解説/選択肢化をしない"
+                ),
+            }
+        )
+        repair_payload = {
+            "model": llm_model or settings.ollama_chat_model,
+            "messages": repair_messages,
+            "stream": False,
+            "options": {
+                "temperature": min(story_settings.temperature, 0.5),
+                "top_p": story_settings.top_p,
+                "num_ctx": story_settings.context_size,
+            },
+        }
+        repair_response = await _post_ollama(
+            "/api/chat",
+            repair_payload,
+            timeout_seconds=settings.ollama_chat_timeout_seconds,
+        )
+        repair_data = repair_response.json()
+        repair_raw_text = repair_data.get("message", {}).get("content", "")
+        repaired_dialogue, repaired_narration = _parse_dual_response(
+            repair_raw_text,
+            story_settings.character_name,
+            user_input,
+        )
+        if repaired_dialogue != fallback_text:
+            dialogue = repaired_dialogue
+            narration = repaired_narration
+
+    return dialogue, narration
 
 
 async def embed_text(text: str) -> list[float]:
