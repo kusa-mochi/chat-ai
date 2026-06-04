@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -13,13 +13,7 @@ class StorySettings(Base):
     story_id: Mapped[str] = mapped_column(String(36), ForeignKey("stories.id", ondelete="CASCADE"), unique=True)
 
     context_size: Mapped[int] = mapped_column(Integer, default=4096, nullable=False)
-    preprompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    character_name: Mapped[str] = mapped_column(String(80), default="語り部の相棒", nullable=False)
-    character_persona: Mapped[str] = mapped_column(
-        Text,
-        default="親密で文学的、比喩を交えつつ物語を前へ進める。",
-        nullable=False,
-    )
+    character_name: Mapped[str] = mapped_column(String(80), default="シャルロット", nullable=False)
     temperature: Mapped[float] = mapped_column(Float, default=0.6, nullable=False)
     top_p: Mapped[float] = mapped_column(Float, default=0.8, nullable=False)
 

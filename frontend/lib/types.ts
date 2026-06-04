@@ -34,9 +34,7 @@ export type BranchSummary = {
 export type StorySettings = {
   story_id: string;
   context_size: number;
-  preprompt: string;
   character_name: string;
-  character_persona: string;
   temperature: number;
   top_p: number;
 };

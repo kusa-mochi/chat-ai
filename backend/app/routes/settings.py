@@ -42,9 +42,7 @@ def update_story_settings(
         db.add(settings)
 
     settings.context_size = payload.context_size
-    settings.preprompt = payload.preprompt
     settings.character_name = payload.character_name
-    settings.character_persona = payload.character_persona
     settings.temperature = payload.temperature
     settings.top_p = payload.top_p
 

@@ -26,9 +26,7 @@ type SelectionState = {
 const defaultSettings: StorySettings = {
   story_id: "",
   context_size: 4096,
-  preprompt: "",
-  character_name: "語り部の相棒",
-  character_persona: "親密で文学的、比喩を交えつつ物語を前へ進める。",
+  character_name: "シャルロット",
   temperature: 0.6,
   top_p: 0.8,
 };
@@ -385,33 +383,11 @@ export default function StoryPage({ params }: { params: { id: string } }) {
             </label>
 
             <label>
-              プレプロンプト
-              <textarea
-                className="field"
-                rows={4}
-                value={settings.preprompt}
-                onChange={(event) => setSettings((prev) => ({ ...prev, preprompt: event.target.value }))}
-              />
-            </label>
-
-            <label>
               登場人物名
               <input
                 className="field"
                 value={settings.character_name}
                 onChange={(event) => setSettings((prev) => ({ ...prev, character_name: event.target.value }))}
-              />
-            </label>
-
-            <label>
-              人格設定
-              <textarea
-                className="field"
-                rows={5}
-                value={settings.character_persona}
-                onChange={(event) =>
-                  setSettings((prev) => ({ ...prev, character_persona: event.target.value }))
-                }
               />
             </label>
 
