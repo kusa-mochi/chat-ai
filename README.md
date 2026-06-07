@@ -49,42 +49,34 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 docker compose up -d --build
 ```
 
+`docker compose down -v` 後の復旧は、次の1コマンドで完了します。
+
+```powershell
+pwsh ./scripts/reset-and-up.ps1
+```
+
+ボリューム削除まで含めて1コマンドでやる場合:
+
+```powershell
+pwsh ./scripts/reset-and-up.ps1 -ResetVolumes
+```
+
 ## 4. モデルの準備
 
-### 4.1 チャットモデル (GGUF) を Ollama に登録
+通常は `pwsh ./scripts/reset-and-up.ps1` が自動で実施します。
 
-`backend/llm_models/` にある GGUF を Ollama コンテナへコピーし、モデルとして登録します。
+- Ollama の起動待機
+- チャットモデル作成 (`OLLAMA_CHAT_MODEL`)
+- 埋め込みモデル pull (`OLLAMA_EMBEDDING_MODEL`)
+- backend の再作成
+
+手動で実行したい場合のみ、下記を使ってください。
 
 ```powershell
 docker compose up -d ollama
-
-$ModelName = "qwen2.5-7b-instruct-uncensored-q4km"
-$Gguf = "backend/llm_models/Qwen2.5-7B-Instruct-Uncensored.Q4_K_M.gguf"
-$ModelfileLocal = "backend/llm_models/Modelfile.$ModelName"
-
-@"
-FROM /models/Qwen2.5-7B-Instruct-Uncensored.Q4_K_M.gguf
-PARAMETER num_ctx 4096
-"@ | Set-Content -Path $ModelfileLocal -Encoding ascii
-
-docker compose exec ollama mkdir -p /models
-docker cp $Gguf "chat-ai-ollama:/models/Qwen2.5-7B-Instruct-Uncensored.Q4_K_M.gguf"
-docker cp $ModelfileLocal "chat-ai-ollama:/models/Modelfile.$ModelName"
-docker compose exec ollama ollama create $ModelName -f /models/Modelfile.$ModelName
-docker compose exec ollama ollama list
-```
-
-### 4.2 埋め込みモデルを pull
-
-```powershell
+docker compose exec ollama ollama create qwen2.5-7b-instruct-uncensored-q4km:latest -f /models/Modelfile.qwen2.5-7b-instruct-uncensored-q4km
 docker compose exec ollama ollama pull nomic-embed-text
-```
-
-最後に backend を再作成して環境変数の反映を確認します。
-
-```powershell
 docker compose up -d --force-recreate backend
-docker compose exec backend printenv OLLAMA_CHAT_MODEL OLLAMA_EMBEDDING_MODEL
 ```
 
 ## 5. 利用URL
@@ -113,7 +105,7 @@ docker compose down
 ## 8. トラブルシュート
 
 - Ollamaモデル未取得で 500 が出る
-  - 上記 4.1/4.2 を実行してから再試行
+  - `pwsh ./scripts/reset-and-up.ps1` を実行して再試行
 - 画像生成が timeout になる
   - ComfyUI 側にチェックポイントが未配置の可能性
   - `COMFYUI_CHECKPOINT` を実在ファイル名に合わせる
