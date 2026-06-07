@@ -1,13 +1,19 @@
 import asyncio
 import json
+import logging
 import re
-from typing import Iterable
+from typing import Awaitable, Callable, Iterable
 
 import httpx
 
 from app.config import settings
 from app.models.message import Message
 from app.models.story_settings import StorySettings
+
+
+logger = logging.getLogger(__name__)
+
+SECTION_TAG_RE = re.compile(r"\[/?(?:dialogue|narration)\]", flags=re.IGNORECASE)
 
 
 def _build_system_prompt(story_settings: StorySettings) -> str:
@@ -141,6 +147,10 @@ def _looks_like_spoken_line(text: str) -> bool:
     return True
 
 
+def _strip_section_tags(text: str) -> str:
+    return SECTION_TAG_RE.sub("", text)
+
+
 def _looks_like_fragment(text: str) -> bool:
     stripped = text.strip()
     # if len(stripped) < 7:
@@ -188,8 +198,7 @@ def _is_invalid_dialogue(dialogue: str, character_name: str, user_input: str) ->
 
 
 def _sanitize_narration(narration: str) -> str:
-    cleaned = narration.strip()
-    cleaned = cleaned.replace("[dialogue]", "").replace("[narration]", "").strip()
+    cleaned = _strip_section_tags(narration).strip()
     if not cleaned:
         return ""
 
@@ -205,8 +214,8 @@ def _extract_first_spoken_line(text: str) -> str:
         return quote_match.group(1).strip()
 
     for line in text.splitlines():
-        candidate = line.strip().lstrip("-* ")
-        if candidate in {"[dialogue]", "[narration]"}:
+        candidate = _strip_section_tags(line.strip().lstrip("-* ")).strip()
+        if not candidate:
             continue
         if _looks_like_spoken_line(candidate):
             return candidate
@@ -218,19 +227,26 @@ def _parse_dual_response(raw_text: str, character_name: str, user_input: str) ->
     narration = ""
     used_dual_sections = False
 
-    if "[dialogue]" in raw_text and "[narration]" in raw_text:
-        parts = raw_text.split("[dialogue]", 1)[1]
-        if "[narration]" in parts:
-            used_dual_sections = True
-            dialogue_part, narration_part = parts.split("[narration]", 1)
-            dialogue = dialogue_part.strip()
-            narration = narration_part.strip()
-        else:
-            narration = raw_text.strip()
-            dialogue = _extract_first_spoken_line(raw_text)
+    dialogue_match = re.search(
+        r"\[dialogue\](.*?)(?:\[/?dialogue\]|\[narration\]|$)",
+        raw_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    narration_match = re.search(
+        r"\[narration\](.*?)(?:\[/?narration\]|$)",
+        raw_text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    if dialogue_match or narration_match:
+        used_dual_sections = True
+        dialogue = (dialogue_match.group(1) if dialogue_match else "").strip()
+        narration = (narration_match.group(1) if narration_match else "").strip()
     else:
         narration = raw_text.strip()
         dialogue = _extract_first_spoken_line(raw_text)
+
+    dialogue = _strip_section_tags(dialogue).strip()
 
     if len(dialogue) > 180:
         dialogue = ""
@@ -281,12 +297,71 @@ async def _post_ollama(path: str, payload: dict, timeout_seconds: float) -> http
     raise RuntimeError("Unexpected Ollama request failure")
 
 
-async def chat_story(
+async def _post_ollama_chat_stream(payload: dict, timeout_seconds: float) -> str:
+    return await _post_ollama_chat_stream_with_callback(payload, timeout_seconds, on_chunk=None)
+
+
+async def _post_ollama_chat_stream_with_callback(
+    payload: dict,
+    timeout_seconds: float,
+    on_chunk: Callable[[str], Awaitable[None]] | None,
+) -> str:
+    last_exc: httpx.HTTPError | None = None
+    for attempt in range(2):
+        try:
+            timeout = httpx.Timeout(timeout_seconds, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{settings.ollama_base_url}/api/chat",
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    chunks: list[str] = []
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            item = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+
+                        message = item.get("message")
+                        if isinstance(message, dict):
+                            content_part = message.get("content", "")
+                            if content_part:
+                                chunks.append(content_part)
+                                if on_chunk is not None:
+                                    await on_chunk(content_part)
+
+                        if item.get("done"):
+                            break
+
+                    return "".join(chunks)
+        except (httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+            last_exc = exc
+            if attempt == 0:
+                await asyncio.sleep(0.6)
+                continue
+            raise
+        except httpx.HTTPError as exc:
+            last_exc = exc
+            raise
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Unexpected Ollama stream request failure")
+
+
+async def _chat_story_impl(
     story_settings: StorySettings,
     llm_model: str,
     history: Iterable[Message],
     user_input: str,
     retrieved_context: list[str],
+    *,
+    on_chunk: Callable[[str], Awaitable[None]] | None,
+    allow_repair: bool,
 ) -> tuple[str, str]:
     base_messages = [{"role": "system", "content": _build_system_prompt(story_settings)}]
 
@@ -304,28 +379,26 @@ async def chat_story(
     payload = {
         "model": llm_model or settings.ollama_chat_model,
         "messages": base_messages,
-        "stream": False,
+        "stream": True,
         "options": {
             "temperature": story_settings.temperature,
             "top_p": story_settings.top_p,
             "num_ctx": story_settings.context_size,
+            "num_predict": settings.ollama_chat_max_predict,
         },
     }
 
-    response = await _post_ollama(
-        "/api/chat",
+    raw_text = await _post_ollama_chat_stream_with_callback(
         payload,
         timeout_seconds=settings.ollama_chat_timeout_seconds,
+        on_chunk=on_chunk,
     )
-    data = response.json()
-
-    raw_text = data.get("message", {}).get("content", "")
     dialogue, narration = _parse_dual_response(raw_text, story_settings.character_name, user_input)
 
     # One corrective retry when parser had to fallback, to reduce low-quality
     # or role-drifted responses without relying on generic fallback text.
     fallback_text = _fallback_dialogue(user_input)
-    if dialogue == fallback_text:
+    if allow_repair and dialogue == fallback_text:
         repair_messages = list(base_messages)
         repair_messages.append(
             {
@@ -343,20 +416,18 @@ async def chat_story(
         repair_payload = {
             "model": llm_model or settings.ollama_chat_model,
             "messages": repair_messages,
-            "stream": False,
+            "stream": True,
             "options": {
                 "temperature": min(story_settings.temperature, 0.5),
                 "top_p": story_settings.top_p,
                 "num_ctx": story_settings.context_size,
+                "num_predict": settings.ollama_chat_max_predict,
             },
         }
-        repair_response = await _post_ollama(
-            "/api/chat",
+        repair_raw_text = await _post_ollama_chat_stream(
             repair_payload,
             timeout_seconds=settings.ollama_chat_timeout_seconds,
         )
-        repair_data = repair_response.json()
-        repair_raw_text = repair_data.get("message", {}).get("content", "")
         repaired_dialogue, repaired_narration = _parse_dual_response(
             repair_raw_text,
             story_settings.character_name,
@@ -369,10 +440,78 @@ async def chat_story(
     return dialogue, narration
 
 
+async def chat_story(
+    story_settings: StorySettings,
+    llm_model: str,
+    history: Iterable[Message],
+    user_input: str,
+    retrieved_context: list[str],
+) -> tuple[str, str]:
+    return await _chat_story_impl(
+        story_settings,
+        llm_model,
+        history,
+        user_input,
+        retrieved_context,
+        on_chunk=None,
+        allow_repair=True,
+    )
+
+
+async def chat_story_stream(
+    story_settings: StorySettings,
+    llm_model: str,
+    history: Iterable[Message],
+    user_input: str,
+    retrieved_context: list[str],
+    on_chunk: Callable[[str], Awaitable[None]],
+) -> tuple[str, str]:
+    return await _chat_story_impl(
+        story_settings,
+        llm_model,
+        history,
+        user_input,
+        retrieved_context,
+        on_chunk=on_chunk,
+        allow_repair=False,
+    )
+
+
+async def warmup_ollama() -> None:
+    warmup_payload = {
+        "model": settings.ollama_chat_model,
+        "messages": [
+            {
+                "role": "user",
+                "content": "準備完了なら「OK」だけ返してください。",
+            }
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.0,
+            "num_ctx": 1024,
+            "num_predict": 8,
+        },
+    }
+
+    try:
+        await _post_ollama(
+            "/api/chat",
+            warmup_payload,
+            timeout_seconds=min(settings.ollama_chat_timeout_seconds, 45.0),
+        )
+    except Exception as exc:
+        # Warmup is best-effort and should never block startup.
+        logger.info("Ollama warmup skipped: %s", exc)
+
+
 async def embed_text(text: str) -> list[float]:
     payload = {
         "model": settings.ollama_embedding_model,
         "prompt": text,
+        "options": {
+            "num_ctx": settings.ollama_embedding_num_ctx,
+        },
     }
     response = await _post_ollama(
         "/api/embeddings",

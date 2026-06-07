@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +13,7 @@ from app.routes.chat import router as chat_router
 from app.routes.illustrations import router as illustrations_router
 from app.routes.settings import router as settings_router
 from app.routes.stories import router as stories_router
+from app.services.ollama_service import warmup_ollama
 from app.services.vector_service import ensure_collection
 
 
@@ -86,6 +89,10 @@ async def on_startup() -> None:
         await ensure_collection(vector_size=768)
     except Exception:
         pass
+
+    if settings.ollama_warmup_on_startup:
+        # Warmup in background so API startup is not blocked.
+        asyncio.create_task(warmup_ollama())
 
 
 @app.get("/api/health")

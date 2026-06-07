@@ -16,8 +16,11 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://ollama:11434"
     ollama_chat_model: str = "qwen2.5-7b-instruct-uncensored-q4km:latest"
     ollama_embedding_model: str = "nomic-embed-text"
-    ollama_chat_timeout_seconds: float = 300.0
+    ollama_chat_timeout_seconds: float = 90.0
+    ollama_chat_max_predict: int = 160
     ollama_embedding_timeout_seconds: float = 120.0
+    ollama_embedding_num_ctx: int = 2048
+    ollama_warmup_on_startup: bool = True
 
     comfyui_base_url: str = "http://comfyui:8188"
     comfyui_checkpoint: str = "v1-5-pruned-emaonly.safetensors"

@@ -11,7 +11,7 @@ import {
   getStory,
   listMessages,
   rewindBranch,
-  sendChat,
+  sendChatStream,
   updateSettings,
 } from "../../../lib/api";
 import type { BranchSummary, IllustrationJob, Message, Story, StorySettings } from "../../../lib/types";
@@ -115,25 +115,73 @@ export default function StoryPage({ params }: { params: { id: string } }) {
 
   async function onSend(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!input.trim()) {
+    const content = input.trim();
+    if (!content) {
       return;
     }
 
+    const previousParentMessageId = messages.length ? messages[messages.length - 1].id : null;
+    const tempUserId = `temp-user-${Date.now()}`;
+    const tempAssistantId = `temp-assistant-${Date.now()}`;
+    const nowIso = new Date().toISOString();
+
+    const optimisticUser: Message = {
+      id: tempUserId,
+      story_id: storyId,
+      branch_id: branchId,
+      parent_message_id: previousParentMessageId,
+      role: "user",
+      kind: "user",
+      content,
+      created_at: nowIso,
+    };
+    const optimisticAssistant: Message = {
+      id: tempAssistantId,
+      story_id: storyId,
+      branch_id: branchId,
+      parent_message_id: tempUserId,
+      role: "assistant",
+      kind: "dialogue",
+      content: "",
+      created_at: nowIso,
+    };
+
+    setMessages((prev) => [...prev, optimisticUser, optimisticAssistant]);
+    setInput("");
+    setSelection(null);
     setBusy(true);
     setError(null);
     try {
       const payload = {
-        content: input,
+        content,
         branch_id: branchId,
-        parent_message_id: messages.length ? messages[messages.length - 1].id : null,
+        parent_message_id: previousParentMessageId,
       };
-      const result = await sendChat(storyId, payload);
-      setMessages((prev) => [...prev, ...result.messages]);
+      const result = await sendChatStream(storyId, payload, {
+        onDelta: (chunk) => {
+          setMessages((prev) =>
+            prev.map((message) =>
+              message.id === tempAssistantId
+                ? { ...message, content: message.content + chunk }
+                : message
+            )
+          );
+        },
+      });
+
+      setMessages((prev) => {
+        const withoutOptimistic = prev.filter(
+          (message) => message.id !== tempUserId && message.id !== tempAssistantId
+        );
+        return [...withoutOptimistic, ...result.messages];
+      });
+
       const branchData = await listBranches(storyId);
       setBranches(branchData);
-      setInput("");
-      setSelection(null);
     } catch (err) {
+      setMessages((prev) =>
+        prev.filter((message) => message.id !== tempUserId && message.id !== tempAssistantId)
+      );
       setError(err instanceof Error ? err.message : "送信に失敗しました");
     } finally {
       setBusy(false);
@@ -287,7 +335,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
                     {message.role === "user"
                       ? "あなた"
                       : message.kind === "narration"
-                        ? "Narration"
+                        ? "ナレーション"
                         : settings.character_name || "Character"}
                   </strong>
                   <span className="muted" style={{ fontSize: 12 }}>
