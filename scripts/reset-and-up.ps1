@@ -35,8 +35,9 @@ function Get-DotEnvValue {
     return $parts[1].Trim().Trim('"')
 }
 
-$defaultChatModel = "qwen2.5-7b-instruct-uncensored-q4km:latest"
+$defaultChatModel = "gemma3:12b-it-qat"
 $defaultEmbeddingModel = "nomic-embed-text"
+$customChatModelFromModelfile = "qwen2.5-7b-instruct-uncensored-q4km:latest"
 
 $dotEnvPath = Join-Path $repoRoot ".env"
 $dotEnvChatModel = Get-DotEnvValue -Path $dotEnvPath -Key "OLLAMA_CHAT_MODEL"
@@ -59,10 +60,6 @@ $embeddingModel = if ($env:OLLAMA_EMBEDDING_MODEL) {
 }
 
 $modelfilePath = Join-Path $repoRoot "backend/llm_models/Modelfile.qwen2.5-7b-instruct-uncensored-q4km"
-if (-not (Test-Path $modelfilePath)) {
-    throw "Modelfile not found: $modelfilePath"
-}
-
 $containerModelfilePath = "/models/Modelfile.qwen2.5-7b-instruct-uncensored-q4km"
 
 function Invoke-Compose {
@@ -133,7 +130,14 @@ try {
     Invoke-Compose "up -d --build"
     Wait-OllamaReady
 
-    Ensure-OllamaModel -ModelName $chatModel -CreateModelfile $containerModelfilePath
+    if ($chatModel -eq $customChatModelFromModelfile) {
+        if (-not (Test-Path $modelfilePath)) {
+            throw "Modelfile not found: $modelfilePath"
+        }
+        Ensure-OllamaModel -ModelName $chatModel -CreateModelfile $containerModelfilePath
+    } else {
+        Ensure-OllamaModel -ModelName $chatModel
+    }
     Ensure-OllamaModel -ModelName $embeddingModel
 
     Invoke-Compose "up -d --force-recreate backend"

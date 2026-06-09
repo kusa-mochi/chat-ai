@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     qdrant_collection: str = "story_context"
 
     ollama_base_url: str = "http://ollama:11434"
-    ollama_chat_model: str = "qwen2.5-7b-instruct-uncensored-q4km:latest"
+    ollama_chat_model: str = "gemma3:12b-it-qat"
     ollama_embedding_model: str = "nomic-embed-text"
     ollama_chat_timeout_seconds: float = 90.0
     ollama_chat_max_predict: int = 160

@@ -14,7 +14,7 @@ class StorySettings(Base):
 
     context_size: Mapped[int] = mapped_column(Integer, default=4096, nullable=False)
     character_name: Mapped[str] = mapped_column(String(80), default="シャルロット", nullable=False)
-    temperature: Mapped[float] = mapped_column(Float, default=0.6, nullable=False)
+    temperature: Mapped[float] = mapped_column(Float, default=0.8, nullable=False)
     top_p: Mapped[float] = mapped_column(Float, default=0.8, nullable=False)
 
     story = relationship("Story", back_populates="settings")

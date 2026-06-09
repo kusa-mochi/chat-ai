@@ -27,7 +27,7 @@ const defaultSettings: StorySettings = {
   story_id: "",
   context_size: 4096,
   character_name: "シャルロット",
-  temperature: 0.6,
+  temperature: 0.8,
   top_p: 0.8,
 };
 

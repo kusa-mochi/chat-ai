@@ -17,17 +17,39 @@ SECTION_TAG_RE = re.compile(r"\[/?(?:dialogue|narration)\]", flags=re.IGNORECASE
 
 
 def _build_system_prompt(story_settings: StorySettings) -> str:
-    return f"""あなたの名前: {story_settings.character_name}
+    name = story_settings.character_name
+    return f"""あなたは{name}である。常に{name}として1人称で応答すること。
+
+    役割:
+    - ユーザーはあなた（{name}）に話しかけている
+    - あなたは{name}として、ユーザーへ直接返答する
+    - 自分自身の名前を呼びかける台詞（例:「おはよう、{name}」）は絶対に出力しない
 
     出力形式:
     [dialogue]
-    {story_settings.character_name}の発言（1-2文、カジュアルな口調）
+    {name}としてユーザーへの返答（1-2文、カジュアルな口調）
     [narration]
-    行動・感情描写（任意で少なくともどちらか）
+    {name}の行動・感情描写（省略可）
 
     禁止事項:
     - ユーザーの発言/行動/感情/選択肢の出力
     - ユーザー視点の乗っ取り
+    - {name}の名前を呼びかける形の台詞（ユーザーが言うような台詞）
+    - ユーザーが言いそうな挨拶・セリフの出力
+    - [dialogue]に「{name}は〜」「{name}が〜」の形で自分自身を三人称主語にした文を書くこと
+      （「{name}は〜」は自分の発言ではなく[narration]だ）
+
+    出力例:
+    （正しい例）
+    [dialogue]
+    魔法理論は面白いけど、あなたには負けたくないわ。
+    [narration]
+    {name}はそっぽを向きながらも、口元が微かに緩んだ。
+
+    （誤った例・禁止）
+    [dialogue]
+    {name}は授業に導れると隣に座ることが多い。
+    ↑ {name}を主語にした外部視点の文。{name}の発言ではなく[narration]に書くべき内容。
 
     世界設定:
     - 舞台: グレイシア王国首都の魔法学園（序列制: 決闘・実地試験・貢献度で決定）
@@ -124,15 +146,16 @@ def _contains_japanese(text: str) -> bool:
 
 
 def _looks_like_narrative_dialogue(text: str) -> bool:
+    """Return True when text is structurally narration rather than first-person dialogue.
+
+    The only reliable structural rule—character's own name as grammatical subject—
+    requires the character name and is therefore checked in _is_invalid_dialogue.
+    This function is intentionally minimal to avoid false positives from
+    keyword-based heuristics.
+    """
     stripped = text.strip()
     if not stripped:
         return False
-
-    # if re.search(r"^(勇者|主人公|彼|彼女)[はが]", stripped) and not any(mark in stripped for mark in ("?", "？", "!", "！")):
-    #     return True
-
-    # if re.search(r"(場面|情景|物語|湯けむり|静寂|しばらくの間)", stripped) and "\n" not in stripped:
-    #     return True
 
     return False
 
@@ -408,7 +431,7 @@ async def _chat_story_impl(
                     "再生成では次を必ず守ってください。\n"
                     "- [dialogue] は登場人物として1〜2文で直接返答\n"
                     "- ユーザー視点（私/僕/俺）を乗っ取らない\n"
-                    "- [narration] は空欄でよい\n"
+                    "- [narration] は空欄でもよい\n"
                     "- 要約/解説/選択肢化をしない"
                 ),
             }

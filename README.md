@@ -30,8 +30,8 @@ QDRANT_URL=http://qdrant:6333
 QDRANT_COLLECTION=story_context
 
 OLLAMA_BASE_URL=http://ollama:11434
-# backend/llm_models の GGUF を ollama create したモデル名
-OLLAMA_CHAT_MODEL=qwen2.5-7b-instruct-uncensored-q4km:latest
+# 既定: Gemma 3 12B (QAT)
+OLLAMA_CHAT_MODEL=gemma3:12b-it-qat
 OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 OLLAMA_CHAT_TIMEOUT_SECONDS=90
 OLLAMA_CHAT_MAX_PREDICT=160
@@ -68,8 +68,11 @@ pwsh ./scripts/reset-and-up.ps1 -ResetVolumes
 
 通常は `pwsh ./scripts/reset-and-up.ps1` が自動で実施します。
 
+Ollama のモデル実体は `backend/llm_models/.ollama` に保存されます（bind mount）。
+そのため `docker compose down -v` 実行後でも、次回起動時に再ダウンロードは基本不要です。
+
 - Ollama の起動待機
-- チャットモデル作成 (`OLLAMA_CHAT_MODEL`)
+- チャットモデル準備 (`OLLAMA_CHAT_MODEL` を pull、ローカルQwen指定時のみ create)
 - 埋め込みモデル pull (`OLLAMA_EMBEDDING_MODEL`)
 - backend の再作成
 
@@ -77,9 +80,15 @@ pwsh ./scripts/reset-and-up.ps1 -ResetVolumes
 
 ```powershell
 docker compose up -d ollama
-docker compose exec ollama ollama create qwen2.5-7b-instruct-uncensored-q4km:latest -f /models/Modelfile.qwen2.5-7b-instruct-uncensored-q4km
+docker compose exec ollama ollama pull gemma3:12b-it-qat
 docker compose exec ollama ollama pull nomic-embed-text
 docker compose up -d --force-recreate backend
+```
+
+ローカルGGUF版Qwenを使いたい場合のみ:
+
+```powershell
+docker compose exec ollama ollama create qwen2.5-7b-instruct-uncensored-q4km:latest -f /models/Modelfile.qwen2.5-7b-instruct-uncensored-q4km
 ```
 
 ## 5. 利用URL
