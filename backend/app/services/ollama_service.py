@@ -14,6 +14,14 @@ from app.models.story_settings import StorySettings
 logger = logging.getLogger(__name__)
 
 SECTION_TAG_RE = re.compile(r"\[/?(?:dialogue|narration)\]", flags=re.IGNORECASE)
+TURN_MARKER_RE = re.compile(
+    r"</?end_of_turn>|<start_of_turn>\s*(?:user|assistant|system|model)?",
+    flags=re.IGNORECASE,
+)
+ROLE_LINE_RE = re.compile(r"(?mi)^\s*(?:user|assistant|system|model)\s*$")
+MIN_DIALOGUE_RESPONSES = 3
+MAX_DIALOGUE_CHARS = 520
+MAX_NARRATION_CHARS = 1400
 
 
 def _build_system_prompt(story_settings: StorySettings) -> str:
@@ -27,9 +35,9 @@ def _build_system_prompt(story_settings: StorySettings) -> str:
 
     出力形式:
     [dialogue]
-    {name}としてユーザーへの返答（1-2文、カジュアルな口調）
+    {name}としてユーザーへの返答（最低3文、推奨3-5文、カジュアルな口調）
     [narration]
-    {name}の行動・感情描写（省略可）
+    {name}の行動・感情描写（段落数は任意、省略可）
 
     禁止事項:
     - ユーザーの発言/行動/感情/選択肢の出力
@@ -165,13 +173,32 @@ def _looks_like_spoken_line(text: str) -> bool:
         return False
     if stripped.count("\n") >= 1:
         return False
-    if len(stripped) > 180:
+    if len(stripped) > 320:
         return False
     return True
 
 
+def _count_dialogue_responses(text: str) -> int:
+    stripped = text.strip()
+    if not stripped:
+        return 0
+
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if len(lines) >= MIN_DIALOGUE_RESPONSES:
+        return len(lines)
+
+    sentence_like_parts = [part.strip() for part in re.split(r"[。！？!?]+", stripped) if part.strip()]
+    return len(sentence_like_parts)
+
+
+def _strip_turn_markers(text: str) -> str:
+    without_turn_markers = TURN_MARKER_RE.sub("", text)
+    without_role_lines = ROLE_LINE_RE.sub("", without_turn_markers)
+    return re.sub(r"\n{3,}", "\n\n", without_role_lines)
+
+
 def _strip_section_tags(text: str) -> str:
-    return SECTION_TAG_RE.sub("", text)
+    return _strip_turn_markers(SECTION_TAG_RE.sub("", text))
 
 
 def _looks_like_fragment(text: str) -> bool:
@@ -190,6 +217,9 @@ def _is_invalid_dialogue(dialogue: str, character_name: str, user_input: str) ->
 
     stripped = dialogue.strip()
     if len(stripped) < 4:
+        return True
+
+    if _count_dialogue_responses(stripped) < MIN_DIALOGUE_RESPONSES:
         return True
 
     normalized_dialogue = _normalize_text_for_compare(stripped)
@@ -221,7 +251,7 @@ def _sanitize_narration(narration: str) -> str:
     if not cleaned:
         return ""
 
-    if len(cleaned) > 420:
+    if len(cleaned) > MAX_NARRATION_CHARS:
         return ""
 
     return cleaned
@@ -242,6 +272,8 @@ def _extract_first_spoken_line(text: str) -> str:
 
 
 def _parse_dual_response(raw_text: str, character_name: str, user_input: str) -> tuple[str, str]:
+    raw_text = _strip_turn_markers(raw_text).strip()
+
     dialogue = ""
     narration = ""
     used_dual_sections = False
@@ -267,7 +299,7 @@ def _parse_dual_response(raw_text: str, character_name: str, user_input: str) ->
 
     dialogue = _strip_section_tags(dialogue).strip()
 
-    if len(dialogue) > 180:
+    if len(dialogue) > MAX_DIALOGUE_CHARS:
         dialogue = ""
 
     used_fallback_dialogue = False
@@ -421,9 +453,9 @@ async def _chat_story_impl(
                 "content": (
                     "直前の出力は規則違反でした。\n"
                     "再生成では次を必ず守ってください。\n"
-                    "- [dialogue] は登場人物として1〜2文で直接返答\n"
+                    "- [dialogue] は登場人物として最低3文、自然な連続返答にする\n"
                     "- ユーザー視点（私/僕/俺）を乗っ取らない\n"
-                    "- [narration] は空欄でもよい\n"
+                    "- [narration] は空欄でもよい。必要なら複数段落でよい\n"
                     "- 要約/解説/選択肢化をしない"
                 ),
             }

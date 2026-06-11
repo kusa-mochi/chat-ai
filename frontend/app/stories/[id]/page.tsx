@@ -46,6 +46,71 @@ function messageTone(message: Message): string {
 }
 
 
+const BASE_SYSTEM_PROMPT_TOKENS = 320;
+const HISTORY_WINDOW = 30;
+const SECTION_TAG_PATTERN = /\[\/?(?:dialogue|narration)\]/gi;
+const TURN_MARKER_PATTERN = /<\/?end_of_turn>|<start_of_turn>\s*(?:user|assistant|system|model)?/gi;
+const ROLE_LINE_PATTERN = /^\s*(?:user|assistant|system|model)\s*$/gim;
+
+
+function estimateTokensFromText(text: string): number {
+  let score = 0;
+  for (const char of text) {
+    if (/\s/.test(char)) {
+      continue;
+    }
+    if (/[A-Za-z0-9]/.test(char)) {
+      score += 0.25;
+      continue;
+    }
+    if (/[\u3040-\u30ff\u3400-\u9fff]/.test(char)) {
+      score += 1;
+      continue;
+    }
+    score += 0.5;
+  }
+  return Math.max(1, Math.ceil(score));
+}
+
+
+function estimateMessageTokens(message: Message): number {
+  const roleOverhead = message.role === "assistant" ? 6 : 4;
+  const kindOverhead = message.kind === "narration" ? 6 : 3;
+  return roleOverhead + kindOverhead + estimateTokensFromText(message.content);
+}
+
+
+function stripSectionTags(text: string): string {
+  const withoutSections = text.replace(SECTION_TAG_PATTERN, "");
+  const withoutTurnMarkers = withoutSections.replace(TURN_MARKER_PATTERN, "");
+  const withoutRoleLines = withoutTurnMarkers.replace(ROLE_LINE_PATTERN, "");
+  return withoutRoleLines.replace(/\n{3,}/g, "\n\n");
+}
+
+
+function extractStreamingDialogue(rawText: string): string {
+  const dialogueMatch = rawText.match(/\[dialogue\]/i);
+  const narrationMatch = rawText.match(/\[narration\]/i);
+
+  if (!dialogueMatch && !narrationMatch) {
+    return stripSectionTags(rawText);
+  }
+
+  if (dialogueMatch) {
+    const dialogueStart = dialogueMatch.index ?? 0;
+    const afterDialogueTag = rawText.slice(dialogueStart + dialogueMatch[0].length);
+    const narrationInDialogue = afterDialogueTag.match(/\[narration\]/i);
+    const dialoguePart = narrationInDialogue
+      ? afterDialogueTag.slice(0, narrationInDialogue.index ?? 0)
+      : afterDialogueTag;
+    return stripSectionTags(dialoguePart).trimStart();
+  }
+
+  const beforeNarration = rawText.slice(0, narrationMatch?.index ?? 0);
+  return stripSectionTags(beforeNarration).trimStart();
+}
+
+
 export default function StoryPage({ params }: { params: { id: string } }) {
   const storyId = params.id;
 
@@ -152,6 +217,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
     setBusy(true);
     setError(null);
     try {
+      let streamedRaw = "";
       const payload = {
         content,
         branch_id: branchId,
@@ -159,10 +225,12 @@ export default function StoryPage({ params }: { params: { id: string } }) {
       };
       const result = await sendChatStream(storyId, payload, {
         onDelta: (chunk) => {
+          streamedRaw += chunk;
+          const dialoguePreview = extractStreamingDialogue(streamedRaw);
           setMessages((prev) =>
             prev.map((message) =>
               message.id === tempAssistantId
-                ? { ...message, content: message.content + chunk }
+                ? { ...message, content: dialoguePreview }
                 : message
             )
           );
@@ -269,6 +337,43 @@ export default function StoryPage({ params }: { params: { id: string } }) {
     return { [selection.messageId]: selection.text };
   }, [selection]);
 
+  const contextUsage = useMemo(() => {
+    const recentMessages = messages.slice(-HISTORY_WINDOW);
+    const historyTokens = recentMessages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
+    const inputTokens = input.trim() ? estimateTokensFromText(input.trim()) + 4 : 0;
+    const systemTokens = BASE_SYSTEM_PROMPT_TOKENS + estimateTokensFromText(settings.character_name || "");
+    const estimatedTokens = historyTokens + inputTokens + systemTokens;
+    const contextLimit = Math.max(1, settings.context_size || 1);
+    const ratioRaw = estimatedTokens / contextLimit;
+
+    let tone = "#2f7d4a";
+    let hint = "余裕あり";
+    if (ratioRaw >= 1) {
+      tone = "#b33a2f";
+      hint = "上限超過";
+    } else if (ratioRaw >= 0.85) {
+      tone = "#c66a00";
+      hint = "ほぼ上限";
+    } else if (ratioRaw >= 0.6) {
+      tone = "#b8861d";
+      hint = "注意";
+    }
+
+    return {
+      recentMessageCount: recentMessages.length,
+      historyTokens,
+      inputTokens,
+      systemTokens,
+      estimatedTokens,
+      contextLimit,
+      ratioRaw,
+      barPercent: Math.max(0, Math.min(100, Math.round(ratioRaw * 100))),
+      displayPercent: Math.round(ratioRaw * 100),
+      tone,
+      hint,
+    };
+  }, [input, messages, settings.character_name, settings.context_size]);
+
   return (
     <main className="shell" style={{ maxWidth: 1300, margin: "0 auto" }}>
       <header className="card" style={{ padding: 16, marginBottom: 14 }}>
@@ -343,7 +448,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
                   </span>
                 </div>
 
-                <p style={{ whiteSpace: "pre-wrap", marginBottom: 8 }}>{message.content}</p>
+                <p style={{ whiteSpace: "pre-wrap", marginBottom: 8 }}>{stripSectionTags(message.content)}</p>
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button
@@ -429,6 +534,50 @@ export default function StoryPage({ params }: { params: { id: string } }) {
                 }
               />
             </label>
+
+            <div
+              style={{
+                border: "1px solid var(--line)",
+                borderRadius: 10,
+                padding: 10,
+                background: "#ffffff85",
+                display: "grid",
+                gap: 6,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <strong style={{ fontSize: 13 }}>現在のコンテキスト消費 (推定)</strong>
+                <span style={{ fontSize: 12, color: contextUsage.tone }}>
+                  {contextUsage.estimatedTokens.toLocaleString()} / {contextUsage.contextLimit.toLocaleString()} tokens ({contextUsage.displayPercent}%)
+                </span>
+              </div>
+
+              <div
+                style={{
+                  width: "100%",
+                  height: 10,
+                  borderRadius: 999,
+                  background: "#00000014",
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    width: `${contextUsage.barPercent}%`,
+                    height: "100%",
+                    background: contextUsage.tone,
+                    transition: "width 180ms ease",
+                  }}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
+                <span className="muted">履歴(直近{contextUsage.recentMessageCount}件): 約{contextUsage.historyTokens} tokens</span>
+                <span className="muted">入力: 約{contextUsage.inputTokens} tokens</span>
+                <span className="muted">固定プロンプト: 約{contextUsage.systemTokens} tokens</span>
+                <span style={{ color: contextUsage.tone, fontWeight: 700 }}>{contextUsage.hint}</span>
+              </div>
+            </div>
 
             <label>
               登場人物名
