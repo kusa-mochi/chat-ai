@@ -184,10 +184,6 @@ def _looks_like_fragment(text: str) -> bool:
     return False
 
 
-def _wants_scene_progress(user_input: str) -> bool:
-    return re.search(r"(描写|情景|場面|続き|物語|地の文|ナレーション)", user_input) is not None
-
-
 def _is_invalid_dialogue(dialogue: str, character_name: str, user_input: str) -> bool:
     if not dialogue:
         return True
@@ -283,10 +279,6 @@ def _parse_dual_response(raw_text: str, character_name: str, user_input: str) ->
         narration = ""
 
     narration = _sanitize_narration(narration)
-
-    # Normal chat turns should prioritize dialogue over scene narration.
-    if narration and not _wants_scene_progress(user_input):
-        narration = ""
 
     if narration and dialogue:
         normalized_dialogue = _normalize_text_for_compare(dialogue)

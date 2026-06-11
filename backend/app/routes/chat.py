@@ -59,17 +59,21 @@ async def _generate_dialogue_and_narration(
     history: list[Message],
     user_input: str,
     on_chunk: Callable[[str], Awaitable[None]] | None = None,
-) -> tuple[str, str, str | None, bool]:
+) -> tuple[str, str, str | None, bool, list[float] | None]:
     dialogue = ""
     narration = ""
     generation_error: str | None = None
     last_exc: Exception | None = None
     retry_attempted = False
+    query_vector: list[float] | None = None
+    retrieved_context: list[str] | None = None
 
     for attempt in range(2):
         try:
-            query_vector = await embed_text(user_input)
-            retrieved_context = await search_context(story_id=story_id, vector=query_vector, limit=5)
+            if query_vector is None:
+                query_vector = await embed_text(user_input)
+            if retrieved_context is None:
+                retrieved_context = await search_context(story_id=story_id, vector=query_vector, limit=5)
 
             if on_chunk is None:
                 dialogue, narration = await chat_story(
@@ -109,7 +113,46 @@ async def _generate_dialogue_and_narration(
         dialogue = fallback_dialogue
         narration = fallback_narration
 
-    return dialogue, narration, generation_error, retry_attempted
+    return dialogue, narration, generation_error, retry_attempted, query_vector
+
+
+async def _index_single_message_context(message: dict, precomputed_vector: list[float] | None = None) -> None:
+    content = str(message.get("content") or "")
+    if not content:
+        return
+
+    vector = precomputed_vector if precomputed_vector is not None else await embed_text(content)
+    await upsert_context(
+        story_id=str(message.get("story_id") or ""),
+        branch_id=str(message.get("branch_id") or ""),
+        message_id=str(message.get("id") or ""),
+        role=str(message.get("role") or ""),
+        kind=str(message.get("kind") or ""),
+        content=content,
+        vector=vector,
+    )
+
+
+async def _index_messages_context(
+    messages: list[dict],
+    *,
+    user_message_id: str | None = None,
+    user_vector: list[float] | None = None,
+) -> None:
+    if not messages:
+        return
+
+    tasks: list[Awaitable[None]] = []
+    for message in messages:
+        message_id = str(message.get("id") or "")
+        precomputed_vector = user_vector if user_vector is not None and message_id == user_message_id else None
+        tasks.append(_index_single_message_context(message, precomputed_vector=precomputed_vector))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        if isinstance(result, Exception):
+            # Vector ingestion failures should not block chat continuation.
+            pass
 
 
 @router.get("/messages", response_model=MessageListOut)
@@ -168,6 +211,7 @@ async def send_chat(story_id: str, payload: ChatSendIn, db: Session = Depends(ge
     )
     db.add(user_message)
     db.flush()
+    user_message_id = str(user_message.id)
 
     history = list(
         db.scalars(
@@ -184,7 +228,7 @@ async def send_chat(story_id: str, payload: ChatSendIn, db: Session = Depends(ge
     if history and history[-1].id == user_message.id:
         history = history[:-1]
 
-    dialogue, narration, generation_error, retry_attempted = await _generate_dialogue_and_narration(
+    dialogue, narration, generation_error, retry_attempted, user_query_vector = await _generate_dialogue_and_narration(
         story_id=story_id,
         branch_id=payload.branch_id,
         story_settings=story_settings,
@@ -234,27 +278,22 @@ async def send_chat(story_id: str, payload: ChatSendIn, db: Session = Depends(ge
         db.flush()
         result_messages.append(narration_message)
 
+    result_payload_messages = [
+        MessageOut.model_validate(result_message).model_dump(mode="json")
+        for result_message in result_messages
+    ]
+
     db.commit()
 
-    for item in result_messages:
-        try:
-            vector = await embed_text(item.content)
-            await upsert_context(
-                story_id=item.story_id,
-                branch_id=item.branch_id,
-                message_id=item.id,
-                role=item.role,
-                kind=item.kind,
-                content=item.content,
-                vector=vector,
-            )
-        except Exception:
-            # Vector ingestion failures should not block chat continuation.
-            pass
+    await _index_messages_context(
+        result_payload_messages,
+        user_message_id=user_message_id,
+        user_vector=user_query_vector,
+    )
 
     return ChatSendOut(
         branch_id=payload.branch_id,
-        messages=[MessageOut.model_validate(item) for item in result_messages],
+        messages=[MessageOut.model_validate(item) for item in result_payload_messages],
     )
 
 
@@ -287,6 +326,7 @@ async def send_chat_stream_sse(
     )
     db.add(user_message)
     db.flush()
+    user_message_id = str(user_message.id)
 
     history = list(
         db.scalars(
@@ -298,6 +338,8 @@ async def send_chat_stream_sse(
     )
     history.reverse()
 
+    context_state: dict[str, list[float] | None] = {"user_query_vector": None}
+
     queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
 
     async def push_event(event: str, data: str) -> None:
@@ -308,7 +350,7 @@ async def send_chat_stream_sse(
             async def on_chunk(chunk: str) -> None:
                 await push_event("delta", chunk)
 
-            dialogue, narration, generation_error, retry_attempted = await _generate_dialogue_and_narration(
+            dialogue, narration, generation_error, retry_attempted, user_query_vector = await _generate_dialogue_and_narration(
                 story_id=story_id,
                 branch_id=payload.branch_id,
                 story_settings=story_settings,
@@ -317,6 +359,7 @@ async def send_chat_stream_sse(
                 user_input=payload.content,
                 on_chunk=on_chunk,
             )
+            context_state["user_query_vector"] = user_query_vector
             await push_event(
                 "generated",
                 json.dumps(
@@ -414,20 +457,11 @@ async def send_chat_stream_sse(
 
                         db.commit()
 
-                        for result_message in result_payload_messages:
-                            try:
-                                vector = await embed_text(str(result_message["content"]))
-                                await upsert_context(
-                                    story_id=str(result_message["story_id"]),
-                                    branch_id=str(result_message["branch_id"]),
-                                    message_id=str(result_message["id"]),
-                                    role=str(result_message["role"]),
-                                    kind=str(result_message["kind"]),
-                                    content=str(result_message["content"]),
-                                    vector=vector,
-                                )
-                            except Exception:
-                                pass
+                        await _index_messages_context(
+                            result_payload_messages,
+                            user_message_id=user_message_id,
+                            user_vector=context_state.get("user_query_vector"),
+                        )
 
                         result = {
                             "branch_id": payload.branch_id,
