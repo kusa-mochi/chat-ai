@@ -1,5 +1,8 @@
+/** @jsxImportSource @emotion/react */
 "use client";
 
+import { css } from "@emotion/react";
+import styled from "@emotion/styled";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -16,12 +19,10 @@ import {
 } from "../../../lib/api";
 import type { BranchSummary, IllustrationJob, Message, Story, StorySettings } from "../../../lib/types";
 
-
 type SelectionState = {
   text: string;
   messageId: string;
 } | null;
-
 
 const defaultSettings: StorySettings = {
   story_id: "",
@@ -30,7 +31,6 @@ const defaultSettings: StorySettings = {
   temperature: 0.8,
   top_p: 0.8,
 };
-
 
 function messageTone(message: Message): string {
   if (message.role === "user") {
@@ -45,12 +45,10 @@ function messageTone(message: Message): string {
   return "#f5f5f5";
 }
 
-
 const BASE_SYSTEM_PROMPT_TOKENS = 320;
 const HISTORY_WINDOW = 30;
 const TURN_MARKER_PATTERN = /<\/?end_of_turn>|<start_of_turn>\s*(?:user|assistant|system|model)?/gi;
 const ROLE_LINE_PATTERN = /^\s*(?:user|assistant|system|model)\s*$/gim;
-
 
 function estimateTokensFromText(text: string): number {
   let score = 0;
@@ -71,13 +69,11 @@ function estimateTokensFromText(text: string): number {
   return Math.max(1, Math.ceil(score));
 }
 
-
 function estimateMessageTokens(message: Message): number {
   const roleOverhead = message.role === "assistant" ? 6 : 4;
   const kindOverhead = message.kind === "narration" ? 6 : 3;
   return roleOverhead + kindOverhead + estimateTokensFromText(message.content);
 }
-
 
 function stripSectionTags(text: string): string {
   const withoutTurnMarkers = text.replace(TURN_MARKER_PATTERN, "");
@@ -85,6 +81,248 @@ function stripSectionTags(text: string): string {
   return withoutRoleLines.replace(/\n{3,}/g, "\n\n");
 }
 
+const shellStyle = css({
+  maxWidth: 1300,
+  margin: "0 auto",
+  minHeight: "100vh",
+  padding: 28,
+  "@media (max-width: 900px)": {
+    padding: 14,
+  },
+});
+
+const cardStyle = css({
+  border: "1px solid var(--line)",
+  background: "var(--panel)",
+  borderRadius: 18,
+  backdropFilter: "blur(6px)",
+});
+
+const mutedStyle = css({
+  color: "var(--ink-soft)",
+});
+
+const headerStyle = css({
+  padding: 16,
+  marginBottom: 14,
+});
+
+const headerRowStyle = css({
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  flexWrap: "wrap",
+});
+
+const pageTitleStyle = css({
+  margin: 0,
+});
+
+const noBottomMarginStyle = css({
+  marginBottom: 0,
+});
+
+const rowActionsStyle = css({
+  display: "flex",
+  gap: 8,
+});
+
+const contentGridStyle = css({
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 340px)",
+  gap: 14,
+  "@media (max-width: 1100px)": {
+    gridTemplateColumns: "1fr",
+  },
+});
+
+const chatSectionStyle = css({
+  padding: 12,
+  minHeight: 680,
+  display: "flex",
+  flexDirection: "column",
+});
+
+const messageListStyle = css({
+  flex: 1,
+  overflowY: "auto",
+  borderRadius: 12,
+  padding: 10,
+  border: "1px solid var(--line)",
+  background: "#ffffff8a",
+});
+
+const centerRowStyle = css({
+  display: "flex",
+  justifyContent: "center",
+  marginBottom: 10,
+});
+
+const buttonBaseStyle = css({
+  border: "1px solid var(--line)",
+  background: "#fff9",
+  color: "var(--ink)",
+  borderRadius: 12,
+  padding: "10px 14px",
+  cursor: "pointer",
+  fontWeight: 700,
+  fontFamily: "inherit",
+  "&:disabled": {
+    opacity: 0.6,
+    cursor: "not-allowed",
+  },
+});
+
+const primaryButtonStyle = css({
+  background: "var(--accent)",
+  color: "#fff",
+  borderColor: "transparent",
+});
+
+const messageCardStyle = css({
+  padding: 12,
+  borderRadius: 10,
+  marginBottom: 10,
+  border: "1px solid var(--line)",
+});
+
+const messageHeaderStyle = css({
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 10,
+});
+
+const timestampStyle = css({
+  fontSize: 12,
+});
+
+const messageBodyStyle = css({
+  whiteSpace: "pre-wrap",
+  marginBottom: 8,
+});
+
+const wrapRowStyle = css({
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+});
+
+const chatFormStyle = css({
+  display: "grid",
+  gap: 8,
+  marginTop: 10,
+});
+
+const fieldStyle = css({
+  width: "100%",
+  border: "1px solid var(--line)",
+  borderRadius: 10,
+  padding: "10px 12px",
+  background: "#fff",
+  color: "var(--ink)",
+  fontFamily: "inherit",
+});
+
+const chatFooterStyle = css({
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 8,
+});
+
+const errorTextStyle = css({
+  color: "#8f1f10",
+});
+
+const sidebarStyle = css({
+  padding: 14,
+  height: "fit-content",
+});
+
+const subHeadingStyle = css({
+  marginTop: 0,
+});
+
+const branchListStyle = css({
+  display: "grid",
+  gap: 8,
+  marginBottom: 14,
+});
+
+const branchButtonStyle = css({
+  textAlign: "left",
+});
+
+const branchStatusStyle = css({
+  fontSize: 12,
+  opacity: 0.9,
+});
+
+const branchIdStyle = css({
+  fontWeight: 700,
+});
+
+const branchMetaStyle = css({
+  fontSize: 12,
+});
+
+const dividerStyle = css({
+  margin: "16px 0",
+  borderColor: "var(--line)",
+});
+
+const settingsFormStyle = css({
+  display: "grid",
+  gap: 8,
+});
+
+const usageCardStyle = css({
+  border: "1px solid var(--line)",
+  borderRadius: 10,
+  padding: 10,
+  background: "#ffffff85",
+  display: "grid",
+  gap: 6,
+});
+
+const usageHeaderStyle = css({
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 8,
+  alignItems: "center",
+});
+
+const usageTitleStyle = css({
+  fontSize: 13,
+});
+
+const usageToneStyle = css({
+  fontSize: 12,
+});
+
+const usageBarTrackStyle = css({
+  width: "100%",
+  height: 10,
+  borderRadius: 999,
+  background: "#00000014",
+  overflow: "hidden",
+});
+
+const usageStatsStyle = css({
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 8,
+  flexWrap: "wrap",
+  fontSize: 12,
+});
+
+const imageStyle = css({
+  width: "100%",
+  borderRadius: 8,
+});
+
+const TextField = styled.input(fieldStyle);
+const TextAreaField = styled.textarea(fieldStyle);
 
 export default function StoryPage({ params }: { params: { id: string } }) {
   const storyId = params.id;
@@ -337,42 +575,47 @@ export default function StoryPage({ params }: { params: { id: string } }) {
     };
   }, [input, messages, settings.characters_text, settings.context_size]);
 
+  const contextToneDynamicStyle = css({
+    color: contextUsage.tone,
+  });
+
+  const contextBarFillStyle = css({
+    width: `${contextUsage.barPercent}%`,
+    height: "100%",
+    background: contextUsage.tone,
+    transition: "width 180ms ease",
+  });
+
+  const messageCardDynamicStyle = (message: Message) =>
+    css({
+      background: messageTone(message),
+    });
+
   return (
-    <main className="shell" style={{ maxWidth: 1300, margin: "0 auto" }}>
-      <header className="card" style={{ padding: 16, marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+    <main css={shellStyle}>
+      <header css={[cardStyle, headerStyle]}>
+        <div css={headerRowStyle}>
           <div>
-            <h1 style={{ margin: 0 }}>{story?.title ?? "物語"}</h1>
-            <p className="muted" style={{ marginBottom: 0 }}>
-              branch: {branchId}
-            </p>
+            <h1 css={pageTitleStyle}>{story?.title ?? "物語"}</h1>
+            <p css={[mutedStyle, noBottomMarginStyle]}>branch: {branchId}</p>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button className="btn" onClick={() => void refreshEverything(branchId)}>
+          <div css={rowActionsStyle}>
+            <button css={buttonBaseStyle} onClick={() => void refreshEverything(branchId)}>
               再読み込み
             </button>
-            <Link href="/" className="btn">
+            <Link href="/" css={buttonBaseStyle}>
               新しい物語
             </Link>
           </div>
         </div>
       </header>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(260px, 340px)", gap: 14 }}>
-        <section className="card" style={{ padding: 12, minHeight: 680, display: "flex", flexDirection: "column" }}>
-          <div
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              borderRadius: 12,
-              padding: 10,
-              border: "1px solid var(--line)",
-              background: "#ffffff8a",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+      <div css={contentGridStyle}>
+        <section css={[cardStyle, chatSectionStyle]}>
+          <div css={messageListStyle}>
+            <div css={centerRowStyle}>
               <button
-                className="btn"
+                css={buttonBaseStyle}
                 type="button"
                 onClick={() => void onLoadOlderHistory()}
                 disabled={loadingMoreHistory || !hasMoreHistory}
@@ -384,13 +627,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
             {messages.map((message) => (
               <article
                 key={message.id}
-                style={{
-                  background: messageTone(message),
-                  padding: 12,
-                  borderRadius: 10,
-                  marginBottom: 10,
-                  border: "1px solid var(--line)",
-                }}
+                css={[messageCardStyle, messageCardDynamicStyle(message)]}
                 onMouseUp={() => {
                   const selected = window.getSelection()?.toString().trim() ?? "";
                   if (selected) {
@@ -398,7 +635,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
                   }
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                <div css={messageHeaderStyle}>
                   <strong>
                     {message.role === "user"
                       ? "あなた"
@@ -406,16 +643,14 @@ export default function StoryPage({ params }: { params: { id: string } }) {
                         ? "ナレーション"
                         : message.speaker_name || "登場人物"}
                   </strong>
-                  <span className="muted" style={{ fontSize: 12 }}>
-                    {new Date(message.created_at).toLocaleString("ja-JP")}
-                  </span>
+                  <span css={[mutedStyle, timestampStyle]}>{new Date(message.created_at).toLocaleString("ja-JP")}</span>
                 </div>
 
-                <p style={{ whiteSpace: "pre-wrap", marginBottom: 8 }}>{stripSectionTags(message.content)}</p>
+                <p css={messageBodyStyle}>{stripSectionTags(message.content)}</p>
 
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div css={wrapRowStyle}>
                   <button
-                    className="btn"
+                    css={buttonBaseStyle}
                     onClick={() => void onGenerateIllustration(message.content, message.id)}
                   >
                     この段落で挿絵
@@ -423,14 +658,14 @@ export default function StoryPage({ params }: { params: { id: string } }) {
 
                   {selectedForMessage[message.id] ? (
                     <button
-                      className="btn"
+                      css={buttonBaseStyle}
                       onClick={() => void onGenerateIllustration(selectedForMessage[message.id], message.id)}
                     >
                       選択テキストで挿絵
                     </button>
                   ) : null}
 
-                  <button className="btn" onClick={() => void onRewind(message.id)}>
+                  <button css={buttonBaseStyle} onClick={() => void onRewind(message.id)}>
                     ここからやり直す
                   </button>
                 </div>
@@ -438,56 +673,57 @@ export default function StoryPage({ params }: { params: { id: string } }) {
             ))}
           </div>
 
-          <form onSubmit={onSend} style={{ display: "grid", gap: 8, marginTop: 10 }}>
-            <textarea
-              className="field"
+          <form onSubmit={onSend} css={chatFormStyle}>
+            <TextAreaField
               rows={4}
               value={input}
               onChange={(event) => setInput(event.target.value)}
               placeholder="物語を入力..."
             />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span className="muted">文字数: {Array.from(input).length}</span>
-              <button className="btn primary" type="submit" disabled={busy}>
+            <div css={chatFooterStyle}>
+              <span css={mutedStyle}>文字数: {Array.from(input).length}</span>
+              <button css={[buttonBaseStyle, primaryButtonStyle]} type="submit" disabled={busy}>
                 {busy ? "生成中..." : "送信"}
               </button>
             </div>
           </form>
 
-          {error ? <p style={{ color: "#8f1f10" }}>{error}</p> : null}
+          {error ? <p css={errorTextStyle}>{error}</p> : null}
         </section>
 
-        <aside className="card" style={{ padding: 14, height: "fit-content" }}>
-          <h2 style={{ marginTop: 0 }}>分岐一覧</h2>
-          <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
-            {branches.length === 0 ? <p className="muted">分岐はまだありません。</p> : null}
+        <aside css={[cardStyle, sidebarStyle]}>
+          <h2 css={subHeadingStyle}>分岐一覧</h2>
+          <div css={branchListStyle}>
+            {branches.length === 0 ? <p css={mutedStyle}>分岐はまだありません。</p> : null}
             {branches.map((branch) => (
               <button
                 key={branch.branch_id}
-                className={`btn ${branch.branch_id === branchId ? "primary" : ""}`}
+                css={[
+                  buttonBaseStyle,
+                  branchButtonStyle,
+                  branch.branch_id === branchId ? primaryButtonStyle : null,
+                ]}
                 type="button"
                 onClick={() => void onSwitchBranch(branch.branch_id)}
                 disabled={busy}
-                style={{ textAlign: "left" }}
                 title={branch.branch_id}
               >
-                <div style={{ fontSize: 12, opacity: 0.9 }}>
+                <div css={branchStatusStyle}>
                   {branch.branch_id === branchId ? "表示中" : branch.is_active ? "現在の正史" : "履歴分岐"}
                 </div>
-                <div style={{ fontWeight: 700 }}>{branch.branch_id.slice(0, 8)}</div>
-                <div style={{ fontSize: 12 }}>messages: {branch.message_count}</div>
+                <div css={branchIdStyle}>{branch.branch_id.slice(0, 8)}</div>
+                <div css={branchMetaStyle}>messages: {branch.message_count}</div>
               </button>
             ))}
           </div>
 
-          <hr style={{ margin: "16px 0", borderColor: "var(--line)" }} />
+          <hr css={dividerStyle} />
 
-          <h2 style={{ marginTop: 0 }}>物語設定</h2>
-          <form onSubmit={onSaveSettings} style={{ display: "grid", gap: 8 }}>
+          <h2 css={subHeadingStyle}>物語設定</h2>
+          <form onSubmit={onSaveSettings} css={settingsFormStyle}>
             <label>
               Context Size
-              <input
-                className="field"
+              <TextField
                 type="number"
                 min={512}
                 max={32768}
@@ -498,54 +734,29 @@ export default function StoryPage({ params }: { params: { id: string } }) {
               />
             </label>
 
-            <div
-              style={{
-                border: "1px solid var(--line)",
-                borderRadius: 10,
-                padding: 10,
-                background: "#ffffff85",
-                display: "grid",
-                gap: 6,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                <strong style={{ fontSize: 13 }}>現在のコンテキスト消費 (推定)</strong>
-                <span style={{ fontSize: 12, color: contextUsage.tone }}>
+            <div css={usageCardStyle}>
+              <div css={usageHeaderStyle}>
+                <strong css={usageTitleStyle}>現在のコンテキスト消費 (推定)</strong>
+                <span css={[usageToneStyle, contextToneDynamicStyle]}>
                   {contextUsage.estimatedTokens.toLocaleString()} / {contextUsage.contextLimit.toLocaleString()} tokens ({contextUsage.displayPercent}%)
                 </span>
               </div>
 
-              <div
-                style={{
-                  width: "100%",
-                  height: 10,
-                  borderRadius: 999,
-                  background: "#00000014",
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  style={{
-                    width: `${contextUsage.barPercent}%`,
-                    height: "100%",
-                    background: contextUsage.tone,
-                    transition: "width 180ms ease",
-                  }}
-                />
+              <div css={usageBarTrackStyle}>
+                <div css={contextBarFillStyle} />
               </div>
 
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", fontSize: 12 }}>
-                <span className="muted">履歴(直近{contextUsage.recentMessageCount}件): 約{contextUsage.historyTokens} tokens</span>
-                <span className="muted">入力: 約{contextUsage.inputTokens} tokens</span>
-                <span className="muted">固定プロンプト: 約{contextUsage.systemTokens} tokens</span>
-                <span style={{ color: contextUsage.tone, fontWeight: 700 }}>{contextUsage.hint}</span>
+              <div css={usageStatsStyle}>
+                <span css={mutedStyle}>履歴(直近{contextUsage.recentMessageCount}件): 約{contextUsage.historyTokens} tokens</span>
+                <span css={mutedStyle}>入力: 約{contextUsage.inputTokens} tokens</span>
+                <span css={mutedStyle}>固定プロンプト: 約{contextUsage.systemTokens} tokens</span>
+                <span css={[contextToneDynamicStyle, branchIdStyle]}>{contextUsage.hint}</span>
               </div>
             </div>
 
             <label>
               キャラクター一覧（改行区切り）
-              <textarea
-                className="field"
+              <TextAreaField
                 rows={8}
                 value={settings.characters_text}
                 onChange={(event) => setSettings((prev) => ({ ...prev, characters_text: event.target.value }))}
@@ -554,8 +765,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
 
             <label>
               Temperature
-              <input
-                className="field"
+              <TextField
                 type="number"
                 min={0}
                 max={2}
@@ -569,8 +779,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
 
             <label>
               Top P
-              <input
-                className="field"
+              <TextField
                 type="number"
                 min={0}
                 max={1}
@@ -580,24 +789,24 @@ export default function StoryPage({ params }: { params: { id: string } }) {
               />
             </label>
 
-            <button className="btn primary" type="submit" disabled={savingSettings}>
+            <button css={[buttonBaseStyle, primaryButtonStyle]} type="submit" disabled={savingSettings}>
               {savingSettings ? "保存中..." : "設定を保存"}
             </button>
           </form>
 
-          <hr style={{ margin: "16px 0", borderColor: "var(--line)" }} />
+          <hr css={dividerStyle} />
 
-          <h3 style={{ marginTop: 0 }}>挿絵ジョブ</h3>
-          {!job ? <p className="muted">まだ実行していません。</p> : null}
+          <h3 css={subHeadingStyle}>挿絵ジョブ</h3>
+          {!job ? <p css={mutedStyle}>まだ実行していません。</p> : null}
           {job ? (
             <div>
               <p>
                 status: <strong>{job.status}</strong>
               </p>
-              {job.status === "error" ? <p style={{ color: "#8f1f10" }}>{job.error_message}</p> : null}
+              {job.status === "error" ? <p css={errorTextStyle}>{job.error_message}</p> : null}
               {job.image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={job.image_url} alt="generated" style={{ width: "100%", borderRadius: 8 }} />
+                <img src={job.image_url} alt="generated" css={imageStyle} />
               ) : null}
             </div>
           ) : null}

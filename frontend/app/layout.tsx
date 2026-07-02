@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Noto_Sans_JP } from "next/font/google";
-
-import "./globals.css";
+import EmotionGlobalStyles from "./emotion-global";
 
 
 const jp = Noto_Sans_JP({
@@ -19,7 +18,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ja">
-      <body className={jp.className}>{children}</body>
+      <body className={jp.className}>
+        <EmotionGlobalStyles />
+        {children}
+      </body>
     </html>
   );
 }
