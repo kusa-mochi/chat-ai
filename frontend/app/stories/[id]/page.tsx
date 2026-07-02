@@ -419,9 +419,9 @@ export default function StoryPage({ params }: { params: { id: string } }) {
       branch_id: branchId,
       parent_message_id: tempUserId,
       role: "assistant",
-      kind: "dialogue",
+      kind: "narration",
       speaker_name: null,
-      content: "生成中...",
+      content: "複数の反応を組み立てています...",
       created_at: nowIso,
     };
 

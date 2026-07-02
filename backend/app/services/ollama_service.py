@@ -51,10 +51,14 @@ JSONスキーマ:
 必須ルール:
 - speakers は配列。各要素は name と line を持つ。
 - narration は文字列（不要なら ""）。
+- 基本は 2 から 4 件の speakers を優先し、場面に自然な反応の連鎖を作る。1人だけにするのは、その場に他の反応者がいない場面や、あえて間を作る場面に限る。
 - ユーザーの発言・行動・感情・選択肢を勝手に決めない。
 - ユーザー入力の特定フレーズを条件に分岐しない。文脈全体で応答を決める。
 - キャラクターを固定しない。場面に合う人物を選ぶ。
+- キャラクター複数名の会話を生成する場合、発話順序は自然な会話の流れに従う。
 - セリフは自然な会話体で、説明文だけの羅列にしない。
+- 反応は少しずつ温度差を付ける。同意だけを並べず、驚き、牽制、茶化し、観察、補足など役割を分ける。
+- 各セリフは冗長な独白にしない。
 
 世界設定:
 - 舞台: グレイシア王国首都の魔法学園（序列制: 決闘・実地試験・貢献度で決定）
@@ -68,29 +72,45 @@ JSONスキーマ:
 
 def _history_to_messages(history: Iterable[Message]) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
+    pending_speakers: list[dict[str, str]] = []
+    pending_narration: list[str] = []
+
+    def flush_assistant_turn() -> None:
+        if not pending_speakers and not pending_narration:
+            return
+
+        payload = {
+            "type": "turn",
+            "speakers": list(pending_speakers),
+            "narration": "\n\n".join(pending_narration),
+        }
+        items.append({"role": "assistant", "content": json.dumps(payload, ensure_ascii=False)})
+        pending_speakers.clear()
+        pending_narration.clear()
+
     for message in history:
         if message.role != "assistant":
+            flush_assistant_turn()
             items.append({"role": "user", "content": message.content})
             continue
 
         if message.kind == "dialogue":
-            payload = {
-                "type": "dialogue",
-                "name": message.speaker_name or "登場人物",
-                "line": message.content,
-            }
-            items.append({"role": "assistant", "content": json.dumps(payload, ensure_ascii=False)})
+            pending_speakers.append(
+                {
+                    "name": message.speaker_name or "登場人物",
+                    "line": message.content,
+                }
+            )
             continue
 
         if message.kind == "narration":
-            payload = {
-                "type": "narration",
-                "text": message.content,
-            }
-            items.append({"role": "assistant", "content": json.dumps(payload, ensure_ascii=False)})
+            pending_narration.append(message.content)
             continue
 
+        flush_assistant_turn()
         items.append({"role": "assistant", "content": message.content})
+
+    flush_assistant_turn()
     return items
 
 
@@ -230,7 +250,13 @@ def _build_user_prompt(*, user_input: str, opening: bool) -> str:
             "キャラクター複数名のセリフまたはナレーションで始めてください。"
         )
 
-    return user_input
+    return (
+        f"ユーザー入力:\n{user_input}\n\n"
+        "返答方針:\n"
+        "- まず場面に自然に関わる 2 から 4 人の反応を優先する。\n"
+        "- それぞれ少し違う視点や温度感で短く返す。\n"
+        "- 1人だけにするのは、文脈上それが自然な場合のみ。"
+    )
 
 
 async def _post_ollama(path: str, payload: dict, timeout_seconds: float) -> httpx.Response:
