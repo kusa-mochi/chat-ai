@@ -76,8 +76,8 @@ def _history_to_messages(history: Iterable[Message]) -> list[dict[str, str]]:
         if message.kind == "dialogue":
             payload = {
                 "type": "dialogue",
-                "speaker": message.speaker_name or "登場人物",
-                "text": message.content,
+                "name": message.speaker_name or "登場人物",
+                "line": message.content,
             }
             items.append({"role": "assistant", "content": json.dumps(payload, ensure_ascii=False)})
             continue
@@ -179,8 +179,9 @@ def _parse_structured_response(raw_text: str) -> tuple[list[SpeakerLine], str, b
         for item in speakers_raw[:MAX_SPEAKERS]:
             if not isinstance(item, dict):
                 continue
-            name = _sanitize_speaker_name(str(item.get("name") or ""))
-            line = _sanitize_text(str(item.get("line") or ""), MAX_DIALOGUE_CHARS)
+            # Backward compatibility: accept both name/line and legacy speaker/text.
+            name = _sanitize_speaker_name(str(item.get("name") or item.get("speaker") or ""))
+            line = _sanitize_text(str(item.get("line") or item.get("text") or ""), MAX_DIALOGUE_CHARS)
             if not name or not line:
                 continue
             speakers.append((name, line))
