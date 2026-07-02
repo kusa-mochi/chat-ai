@@ -44,8 +44,10 @@ def _apply_legacy_schema_patches() -> None:
         "ALTER TABLE stories ALTER COLUMN llm_model SET DEFAULT 'qwen2.5-7b-instruct-uncensored-q4km:latest'",
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS branch_id VARCHAR(36) NOT NULL DEFAULT 'main'",
         "ALTER TABLE messages ADD COLUMN IF NOT EXISTS parent_message_id VARCHAR(36)",
+        "ALTER TABLE messages ADD COLUMN IF NOT EXISTS speaker_name VARCHAR(80)",
         "ALTER TABLE story_settings ADD COLUMN IF NOT EXISTS id VARCHAR(36)",
-        "ALTER TABLE story_settings ADD COLUMN IF NOT EXISTS character_name VARCHAR(80) NOT NULL DEFAULT 'シャルロット'",
+        "ALTER TABLE story_settings ADD COLUMN IF NOT EXISTS character_name VARCHAR(80) NOT NULL DEFAULT ''",
+        "ALTER TABLE story_settings ADD COLUMN IF NOT EXISTS characters_text VARCHAR(4000)",
         "ALTER TABLE story_settings ADD COLUMN IF NOT EXISTS temperature DOUBLE PRECISION NOT NULL DEFAULT 0.9",
         "ALTER TABLE story_settings ADD COLUMN IF NOT EXISTS top_p DOUBLE PRECISION NOT NULL DEFAULT 0.9",
         "UPDATE story_settings SET id = story_id WHERE id IS NULL OR id = ''",
@@ -70,6 +72,7 @@ def _apply_legacy_schema_patches() -> None:
 
         legacy_defaults: list[tuple[str, str]] = [
             ("context_size", "4096"),
+            ("character_name", "''"),
             ("temperature", "0.9"),
             ("ai_character_name", "''"),
         ]
@@ -77,6 +80,9 @@ def _apply_legacy_schema_patches() -> None:
             if column_name in story_settings_columns:
                 conn.execute(text(f"ALTER TABLE story_settings ALTER COLUMN {column_name} SET DEFAULT {default_sql}"))
                 conn.execute(text(f"UPDATE story_settings SET {column_name} = {default_sql} WHERE {column_name} IS NULL"))
+
+        if "characters_text" in story_settings_columns:
+            conn.execute(text("UPDATE story_settings SET characters_text = '' WHERE characters_text IS NULL"))
 
 
 @app.on_event("startup")

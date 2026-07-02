@@ -26,7 +26,7 @@ type SelectionState = {
 const defaultSettings: StorySettings = {
   story_id: "",
   context_size: 4096,
-  character_name: "シャルロット",
+  characters_text: "",
   temperature: 0.8,
   top_p: 0.8,
 };
@@ -48,7 +48,6 @@ function messageTone(message: Message): string {
 
 const BASE_SYSTEM_PROMPT_TOKENS = 320;
 const HISTORY_WINDOW = 30;
-const SECTION_TAG_PATTERN = /\[\/?(?:dialogue|narration)\]/gi;
 const TURN_MARKER_PATTERN = /<\/?end_of_turn>|<start_of_turn>\s*(?:user|assistant|system|model)?/gi;
 const ROLE_LINE_PATTERN = /^\s*(?:user|assistant|system|model)\s*$/gim;
 
@@ -81,33 +80,9 @@ function estimateMessageTokens(message: Message): number {
 
 
 function stripSectionTags(text: string): string {
-  const withoutSections = text.replace(SECTION_TAG_PATTERN, "");
-  const withoutTurnMarkers = withoutSections.replace(TURN_MARKER_PATTERN, "");
+  const withoutTurnMarkers = text.replace(TURN_MARKER_PATTERN, "");
   const withoutRoleLines = withoutTurnMarkers.replace(ROLE_LINE_PATTERN, "");
   return withoutRoleLines.replace(/\n{3,}/g, "\n\n");
-}
-
-
-function extractStreamingDialogue(rawText: string): string {
-  const dialogueMatch = rawText.match(/\[dialogue\]/i);
-  const narrationMatch = rawText.match(/\[narration\]/i);
-
-  if (!dialogueMatch && !narrationMatch) {
-    return stripSectionTags(rawText);
-  }
-
-  if (dialogueMatch) {
-    const dialogueStart = dialogueMatch.index ?? 0;
-    const afterDialogueTag = rawText.slice(dialogueStart + dialogueMatch[0].length);
-    const narrationInDialogue = afterDialogueTag.match(/\[narration\]/i);
-    const dialoguePart = narrationInDialogue
-      ? afterDialogueTag.slice(0, narrationInDialogue.index ?? 0)
-      : afterDialogueTag;
-    return stripSectionTags(dialoguePart).trimStart();
-  }
-
-  const beforeNarration = rawText.slice(0, narrationMatch?.index ?? 0);
-  return stripSectionTags(beforeNarration).trimStart();
 }
 
 
@@ -207,7 +182,8 @@ export default function StoryPage({ params }: { params: { id: string } }) {
       parent_message_id: tempUserId,
       role: "assistant",
       kind: "dialogue",
-      content: "",
+      speaker_name: null,
+      content: "生成中...",
       created_at: nowIso,
     };
 
@@ -217,25 +193,12 @@ export default function StoryPage({ params }: { params: { id: string } }) {
     setBusy(true);
     setError(null);
     try {
-      let streamedRaw = "";
       const payload = {
         content,
         branch_id: branchId,
         parent_message_id: previousParentMessageId,
       };
-      const result = await sendChatStream(storyId, payload, {
-        onDelta: (chunk) => {
-          streamedRaw += chunk;
-          const dialoguePreview = extractStreamingDialogue(streamedRaw);
-          setMessages((prev) =>
-            prev.map((message) =>
-              message.id === tempAssistantId
-                ? { ...message, content: dialoguePreview }
-                : message
-            )
-          );
-        },
-      });
+      const result = await sendChatStream(storyId, payload);
 
       setMessages((prev) => {
         const withoutOptimistic = prev.filter(
@@ -341,7 +304,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
     const recentMessages = messages.slice(-HISTORY_WINDOW);
     const historyTokens = recentMessages.reduce((sum, message) => sum + estimateMessageTokens(message), 0);
     const inputTokens = input.trim() ? estimateTokensFromText(input.trim()) + 4 : 0;
-    const systemTokens = BASE_SYSTEM_PROMPT_TOKENS + estimateTokensFromText(settings.character_name || "");
+    const systemTokens = BASE_SYSTEM_PROMPT_TOKENS + estimateTokensFromText(settings.characters_text || "");
     const estimatedTokens = historyTokens + inputTokens + systemTokens;
     const contextLimit = Math.max(1, settings.context_size || 1);
     const ratioRaw = estimatedTokens / contextLimit;
@@ -372,7 +335,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
       tone,
       hint,
     };
-  }, [input, messages, settings.character_name, settings.context_size]);
+  }, [input, messages, settings.characters_text, settings.context_size]);
 
   return (
     <main className="shell" style={{ maxWidth: 1300, margin: "0 auto" }}>
@@ -441,7 +404,7 @@ export default function StoryPage({ params }: { params: { id: string } }) {
                       ? "あなた"
                       : message.kind === "narration"
                         ? "ナレーション"
-                        : settings.character_name || "Character"}
+                        : message.speaker_name || "登場人物"}
                   </strong>
                   <span className="muted" style={{ fontSize: 12 }}>
                     {new Date(message.created_at).toLocaleString("ja-JP")}
@@ -580,11 +543,12 @@ export default function StoryPage({ params }: { params: { id: string } }) {
             </div>
 
             <label>
-              登場人物名
-              <input
+              キャラクター一覧（改行区切り）
+              <textarea
                 className="field"
-                value={settings.character_name}
-                onChange={(event) => setSettings((prev) => ({ ...prev, character_name: event.target.value }))}
+                rows={8}
+                value={settings.characters_text}
+                onChange={(event) => setSettings((prev) => ({ ...prev, characters_text: event.target.value }))}
               />
             </label>
 

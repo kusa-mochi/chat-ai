@@ -24,6 +24,7 @@ async def upsert_context(
     message_id: str,
     role: str,
     kind: str,
+    speaker_name: str,
     content: str,
     vector: list[float],
 ) -> None:
@@ -38,6 +39,7 @@ async def upsert_context(
                     "message_id": message_id,
                     "role": role,
                     "kind": kind,
+                    "speaker_name": speaker_name,
                     "content": content,
                 },
             }

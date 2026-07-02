@@ -14,6 +14,7 @@ export type Message = {
   parent_message_id: string | null;
   role: "user" | "assistant";
   kind: "user" | "dialogue" | "narration" | "chat";
+  speaker_name?: string | null;
   content: string;
   created_at: string;
 };
@@ -34,7 +35,7 @@ export type BranchSummary = {
 export type StorySettings = {
   story_id: string;
   context_size: number;
-  character_name: string;
+  characters_text: string;
   temperature: number;
   top_p: number;
 };

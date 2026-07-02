@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.story import Story
-from app.models.story_settings import StorySettings
+from app.models.story_settings import DEFAULT_CHARACTERS_TEXT, StorySettings
 from app.schemas.settings import StorySettingsOut, StorySettingsUpdate
 
 
@@ -21,6 +21,11 @@ def get_story_settings(story_id: str, db: Session = Depends(get_db)) -> StorySet
     if settings is None:
         settings = StorySettings(story_id=story_id)
         db.add(settings)
+        db.commit()
+        db.refresh(settings)
+
+    if not settings.characters_text.strip():
+        settings.characters_text = DEFAULT_CHARACTERS_TEXT
         db.commit()
         db.refresh(settings)
     return settings
@@ -42,7 +47,7 @@ def update_story_settings(
         db.add(settings)
 
     settings.context_size = payload.context_size
-    settings.character_name = payload.character_name
+    settings.characters_text = payload.characters_text.strip() or DEFAULT_CHARACTERS_TEXT
     settings.temperature = payload.temperature
     settings.top_p = payload.top_p
 

@@ -28,29 +28,26 @@ def _format_sse(event: str, data: str) -> str:
     return f"event: {event}\n{data_lines}\n\n"
 
 
-def _resolve_generation_error(last_exc: Exception | None) -> tuple[str | None, str, str]:
+def _resolve_generation_error(last_exc: Exception | None) -> tuple[str | None, list[tuple[str, str]], str]:
     if last_exc is None:
-        return None, "", ""
+        return None, [], ""
 
     if isinstance(last_exc, httpx.ReadTimeout):
         generation_error = f"timeout(after-retry): {last_exc}"
-        dialogue = "ごめん、いま応答生成に時間がかかりすぎています。少し待ってから再送するか、入力を短くして試してみてください。"
-        narration = "湯けむりの向こうで、会話は一度途切れた。もう一度、落ち着いて言葉を選び直せば物語は続けられる。"
-        return generation_error, dialogue, narration
+        narration = "エラー：ウップス！物語の神様がちょっと居眠りしてしまったようです。しばらくしてからもう一度お試しください。"
+        return generation_error, [], narration
 
     if isinstance(last_exc, httpx.HTTPError):
         generation_error = f"http-error(after-retry): {last_exc}"
-        dialogue = "ごめん、いまAIモデルとの通信が不安定みたい。少し時間をおいて、もう一度送ってくれる？"
-        narration = "通信が揺らぎ、物語はひと呼吸だけ足踏みした。"
-        return generation_error, dialogue, narration
+        narration = "エラー：ウップス！通信の神様がちょっと具合が悪いようです。しばらくしてからもう一度お試しください。"
+        return generation_error, [], narration
 
     generation_error = f"unexpected(after-retry): {last_exc}"
-    dialogue = "ごめん、いま返答を作る途中で問題が起きました。入力を少し変えてもう一度試してみてください。"
-    narration = "物語の歯車が一瞬きしみ、場面は静かに止まった。"
-    return generation_error, dialogue, narration
+    narration = "物語の歯車が一瞬だけ軋み、場面は静かに止まった。"
+    return generation_error, [], narration
 
 
-async def _generate_dialogue_and_narration(
+async def _generate_speakers_and_narration(
     *,
     story_id: str,
     branch_id: str,
@@ -59,8 +56,8 @@ async def _generate_dialogue_and_narration(
     history: list[Message],
     user_input: str,
     on_chunk: Callable[[str], Awaitable[None]] | None = None,
-) -> tuple[str, str, str | None, bool, list[float] | None]:
-    dialogue = ""
+) -> tuple[list[tuple[str, str]], str, str | None, bool, list[float] | None]:
+    speakers: list[tuple[str, str]] = []
     narration = ""
     generation_error: str | None = None
     last_exc: Exception | None = None
@@ -76,7 +73,7 @@ async def _generate_dialogue_and_narration(
                 retrieved_context = await search_context(story_id=story_id, vector=query_vector, limit=5)
 
             if on_chunk is None:
-                dialogue, narration = await chat_story(
+                speakers, narration = await chat_story(
                     story_settings=story_settings,
                     llm_model=llm_model,
                     history=history,
@@ -84,7 +81,7 @@ async def _generate_dialogue_and_narration(
                     retrieved_context=retrieved_context,
                 )
             else:
-                dialogue, narration = await chat_story_stream(
+                speakers, narration = await chat_story_stream(
                     story_settings=story_settings,
                     llm_model=llm_model,
                     history=history,
@@ -108,12 +105,12 @@ async def _generate_dialogue_and_narration(
                 await asyncio.sleep(0.7)
                 continue
 
-    generation_error, fallback_dialogue, fallback_narration = _resolve_generation_error(last_exc)
+    generation_error, fallback_speakers, fallback_narration = _resolve_generation_error(last_exc)
     if generation_error is not None:
-        dialogue = fallback_dialogue
+        speakers = fallback_speakers
         narration = fallback_narration
 
-    return dialogue, narration, generation_error, retry_attempted, query_vector
+    return speakers, narration, generation_error, retry_attempted, query_vector
 
 
 async def _index_single_message_context(message: dict, precomputed_vector: list[float] | None = None) -> None:
@@ -128,6 +125,7 @@ async def _index_single_message_context(message: dict, precomputed_vector: list[
         message_id=str(message.get("id") or ""),
         role=str(message.get("role") or ""),
         kind=str(message.get("kind") or ""),
+        speaker_name=str(message.get("speaker_name") or ""),
         content=content,
         vector=vector,
     )
@@ -153,6 +151,49 @@ async def _index_messages_context(
         if isinstance(result, Exception):
             # Vector ingestion failures should not block chat continuation.
             pass
+
+
+def _create_assistant_messages(
+    *,
+    db: Session,
+    story_id: str,
+    branch_id: str,
+    initial_parent_message_id: str,
+    speakers: list[tuple[str, str]],
+    narration: str,
+) -> list[Message]:
+    result_messages: list[Message] = []
+    parent_message_id = initial_parent_message_id
+
+    for speaker_name, line in speakers:
+        dialogue_message = Message(
+            story_id=story_id,
+            branch_id=branch_id,
+            parent_message_id=parent_message_id,
+            role="assistant",
+            kind="dialogue",
+            speaker_name=speaker_name,
+            content=line,
+        )
+        db.add(dialogue_message)
+        db.flush()
+        result_messages.append(dialogue_message)
+        parent_message_id = str(dialogue_message.id)
+
+    if narration:
+        narration_message = Message(
+            story_id=story_id,
+            branch_id=branch_id,
+            parent_message_id=parent_message_id,
+            role="assistant",
+            kind="narration",
+            content=narration,
+        )
+        db.add(narration_message)
+        db.flush()
+        result_messages.append(narration_message)
+
+    return result_messages
 
 
 @router.get("/messages", response_model=MessageListOut)
@@ -228,7 +269,7 @@ async def send_chat(story_id: str, payload: ChatSendIn, db: Session = Depends(ge
     if history and history[-1].id == user_message.id:
         history = history[:-1]
 
-    dialogue, narration, generation_error, retry_attempted, user_query_vector = await _generate_dialogue_and_narration(
+    speakers, narration, generation_error, retry_attempted, user_query_vector = await _generate_speakers_and_narration(
         story_id=story_id,
         branch_id=payload.branch_id,
         story_settings=story_settings,
@@ -252,31 +293,15 @@ async def send_chat(story_id: str, payload: ChatSendIn, db: Session = Depends(ge
             payload.branch_id,
         )
 
-    dialogue_message = Message(
+    assistant_messages = _create_assistant_messages(
+        db=db,
         story_id=story_id,
         branch_id=payload.branch_id,
-        parent_message_id=user_message.id,
-        role="assistant",
-        kind="dialogue",
-        content=dialogue,
+        initial_parent_message_id=str(user_message.id),
+        speakers=speakers,
+        narration=narration,
     )
-    db.add(dialogue_message)
-    db.flush()
-
-    result_messages = [user_message, dialogue_message]
-
-    if narration:
-        narration_message = Message(
-            story_id=story_id,
-            branch_id=payload.branch_id,
-            parent_message_id=dialogue_message.id,
-            role="assistant",
-            kind="narration",
-            content=narration,
-        )
-        db.add(narration_message)
-        db.flush()
-        result_messages.append(narration_message)
+    result_messages = [user_message, *assistant_messages]
 
     result_payload_messages = [
         MessageOut.model_validate(result_message).model_dump(mode="json")
@@ -327,6 +352,19 @@ async def send_chat_stream_sse(
     db.add(user_message)
     db.flush()
     user_message_id = str(user_message.id)
+    user_message_payload = MessageOut.model_validate(user_message).model_dump(mode="json")
+
+    generation_settings = StorySettings(
+        story_id=story_id,
+        context_size=story_settings.context_size,
+        characters_text=story_settings.characters_text,
+        temperature=story_settings.temperature,
+        top_p=story_settings.top_p,
+    )
+
+    # Persist the parent message before streaming generation starts.
+    # This avoids FK violations when assistant messages reference user_message_id.
+    db.commit()
 
     history = list(
         db.scalars(
@@ -337,6 +375,9 @@ async def send_chat_stream_sse(
         ).all()
     )
     history.reverse()
+
+    if history and history[-1].id == user_message_id:
+        history = history[:-1]
 
     context_state: dict[str, list[float] | None] = {"user_query_vector": None}
 
@@ -350,10 +391,10 @@ async def send_chat_stream_sse(
             async def on_chunk(chunk: str) -> None:
                 await push_event("delta", chunk)
 
-            dialogue, narration, generation_error, retry_attempted, user_query_vector = await _generate_dialogue_and_narration(
+            speakers, narration, generation_error, retry_attempted, user_query_vector = await _generate_speakers_and_narration(
                 story_id=story_id,
                 branch_id=payload.branch_id,
-                story_settings=story_settings,
+                story_settings=generation_settings,
                 llm_model=llm_model,
                 history=history,
                 user_input=payload.content,
@@ -364,7 +405,7 @@ async def send_chat_stream_sse(
                 "generated",
                 json.dumps(
                     {
-                        "dialogue": dialogue,
+                        "speakers": [{"name": name, "line": line} for name, line in speakers],
                         "narration": narration,
                         "generation_error": generation_error,
                         "retry_attempted": retry_attempted,
@@ -383,7 +424,7 @@ async def send_chat_stream_sse(
         try:
             yield _format_sse(
                 "user",
-                json.dumps(MessageOut.model_validate(user_message).model_dump(mode="json"), ensure_ascii=False),
+                json.dumps(user_message_payload, ensure_ascii=False),
             )
 
             while True:
@@ -394,10 +435,21 @@ async def send_chat_stream_sse(
                 event, data = item
                 if event == "generated":
                     generated = json.loads(data)
-                    dialogue = str(generated.get("dialogue") or "")
+                    speakers_payload = generated.get("speakers")
                     narration = str(generated.get("narration") or "")
                     generation_error = generated.get("generation_error")
                     retry_attempted = bool(generated.get("retry_attempted"))
+
+                    speakers: list[tuple[str, str]] = []
+                    if isinstance(speakers_payload, list):
+                        for item in speakers_payload:
+                            if not isinstance(item, dict):
+                                continue
+                            name = str(item.get("name") or "").strip()
+                            line = str(item.get("line") or "").strip()
+                            if not name or not line:
+                                continue
+                            speakers.append((name, line))
 
                     if generation_error is not None:
                         logger.warning(
@@ -415,40 +467,19 @@ async def send_chat_stream_sse(
                         )
 
                     try:
-                        existing_user_id = db.scalar(select(Message.id).where(Message.id == user_message.id))
-                        if existing_user_id is None:
-                            db.add(user_message)
-                            db.flush()
-
-                        persisted_user = db.get(Message, user_message.id)
-                        if persisted_user is None:
-                            raise RuntimeError("Failed to persist user message before assistant response")
-
-                        dialogue_message = Message(
+                        assistant_messages = _create_assistant_messages(
+                            db=db,
                             story_id=story_id,
                             branch_id=payload.branch_id,
-                            parent_message_id=payload.parent_message_id,
-                            role="assistant",
-                            kind="dialogue",
-                            content=dialogue,
+                            initial_parent_message_id=user_message_id,
+                            speakers=speakers,
+                            narration=narration,
                         )
-                        db.add(dialogue_message)
-                        db.flush()
+                        persisted_user = db.get(Message, user_message_id)
+                        if persisted_user is None:
+                            raise RuntimeError("Failed to load persisted user message")
 
-                        result_messages = [persisted_user, dialogue_message]
-
-                        if narration:
-                            narration_message = Message(
-                                story_id=story_id,
-                                branch_id=payload.branch_id,
-                                parent_message_id=dialogue_message.id,
-                                role="assistant",
-                                kind="narration",
-                                content=narration,
-                            )
-                            db.add(narration_message)
-                            db.flush()
-                            result_messages.append(narration_message)
+                        result_messages = [persisted_user, *assistant_messages]
 
                         result_payload_messages = [
                             MessageOut.model_validate(result_message).model_dump(mode="json")

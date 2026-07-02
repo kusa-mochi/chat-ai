@@ -18,6 +18,7 @@ class MessageOut(ORMModel):
     parent_message_id: str | None
     role: str
     kind: str
+    speaker_name: str | None = None
     content: str
     created_at: datetime
 
